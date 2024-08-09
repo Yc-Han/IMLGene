@@ -96,3 +96,45 @@ abs_sum <- rowSums(abs(as.array(ig)))
 df <- data.frame(abs_sum = abs_sum, position = 1 : 477)
 ggplot(df, aes(x = position, y = abs_sum)) + geom_rect(aes(xmin = 90, xmax = 180, ymin = -Inf, ymax = Inf), fill = "lightblue", alpha = 0.2) + geom_smooth(method = "auto") + geom_point() + theme_bw()
 ```
+
+```{r igmod}
+# abs_sum <- rowSums(abs(as.array(ig)))
+#df <- data.frame(abs_sum = abs_sum, position = 1 : 477)
+#ggplot(df, aes(x = position, y = abs_sum)) + geom_rect(aes(xmin = 90, xmax = 180, ymin = -Inf, ymax = Inf), fill = "lightblue", alpha = 0.2) + geom_smooth(method = "auto") + geom_point() + theme_bw()
+
+# modification: df should be summed every 3 rows, position reassigned accordingly.
+df_mod <- df %>%
+  mutate(group = rep(1:(nrow(df) / 3), each = 3)) %>%
+  group_by(group) %>%
+  summarise(
+    abs_sum_sum = sum(abs_sum),
+    abs_sum_median = median(abs_sum),
+    abs_sum_mean = mean(abs_sum),
+    abs_sum_max = max(abs_sum)
+  )
+
+# Split special_seq (a string) into triplets (every third character)
+chars <- strsplit(special_seq, "")[[1]]
+
+# Create triplets
+trip_spec <- sapply(seq(1, length(chars), by = 3), function(i) {
+  paste(chars[i:min(i+2, length(chars))], collapse = "")
+})
+
+# Get the index of sequences at which trip_spec != triplets
+index <- which(trip_spec != triplets)
+
+# Plot the results with different smooth lines for sum, median, mean, and max
+ggplot(df_mod, aes(x = group)) +
+  geom_rect(aes(xmin = 30, xmax = 60, ymin = -Inf, ymax = Inf), fill = "lightblue", alpha = 0.2) +
+  # draw points of max
+  geom_point(aes(x = group, y = abs_sum_max), color = "purple") +
+  geom_smooth(aes(y = abs_sum_sum, color = "Sum"), method = "auto", se = FALSE) +
+  geom_smooth(aes(y = abs_sum_median, color = "Median"), method = "auto", se = FALSE) +
+  geom_smooth(aes(y = abs_sum_mean, color = "Mean"), method = "auto", se = FALSE) +
+  geom_smooth(aes(y = abs_sum_max, color = "Max"), method = "auto", se = FALSE) +
+  scale_color_manual(values = c("Sum" = "blue", "Median" = "green", "Mean" = "orange", "Max" = "purple")) +
+  geom_point(data = data.frame(group = index), aes(x = group, y = 0), shape = 4, size = 3, color = "red") +
+  theme_bw() +
+  labs(y = "Absolute Sum of IG", color = "Statistic", x = "AA Index")
+```
