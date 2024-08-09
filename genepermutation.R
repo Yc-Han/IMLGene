@@ -66,9 +66,10 @@ permute_sequence <- function(sequence, keyed_sequence, type="ok",
     })
   } else if (type == "func") {
     replacements <- sapply(sub.indices, function(i) {
+      sample(unlist(dict), 1)
       # Exclude the current key's values from the list
-      available_elements <- unlist(dict[-which(names(dict) == keyed_sequence[i])])
-      sample(available_elements, 1)
+      #available_elements <- unlist(dict[-which(names(dict) == keyed_sequence[i])])
+      #sample(available_elements, 1)
     })
   } else {
     stop("Invalid type")

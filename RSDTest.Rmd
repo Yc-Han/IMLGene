@@ -9,7 +9,7 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r pkgs}
+```{r pkgs, message=FALSE, warning=FALSE}
 library(deepG)
 library(ggplot2)
 library(microseq)
@@ -95,9 +95,9 @@ write_fasta(validation_set, "validation")
 write_fasta(test_set, "test")
 ```
 
-```{r modelarchitecture}
+```{r modelarchitecture, message=FALSE}
 model <- create_model_lstm_cnn(
-  maxlen = 400,
+  maxlen = 477,
   layer_lstm = NULL,
   layer_dense = c(3L),
   vocabulary_size = 4,
@@ -130,12 +130,14 @@ hist <- train_model(train_type = "label_folder",
   path_checkpoint = path_checkpoint,
   train_val_ratio = 0.2,
   run_name = "rsd-permutation",
-  batch_size = 96, # number of samples to process in parallel
+  batch_size = 64, # number of samples to process in parallel
   steps_per_epoch = 45, # 1 epoch = 15 batches
   epochs = 10,
   save_best_only = FALSE,
-  step = c(3, 3, 3))
+  step = c(1, 1, 1))
 plot(hist)
+# save hist
+# saveRDS(hist, file = "outputs/hist39.rds")
 ```
 
 ```{r evamodel}
@@ -156,31 +158,33 @@ eval_model <- evaluate_model(path_input = c(path_normal_test,
 eval_model
 ```
 
-```{r ig}
+```{r ig39, warning=FALSE}
 # create one instance with label special
-special_seq <- permute_sequence(triplets, keyed, type="ok", min.subs=5, max.subs=30,
+model39 <- load_cp(paste0(file.path("checkpoints"), "/", "rsd-permutation_39"), 
+                 cp_filter = "last_ep")
+special_seq <- permute_sequence(triplets, keyed, type="ok", min.subs=10, max.subs=30,
                                 dict=codon.dict, spec.cond=FALSE, spec.region=NULL)
-special_seq <- permute_sequence(special_seq, keyed, type="func", min.subs=20, max.subs=30,
+special_seq <- permute_sequence(special_seq, keyed, type="func", min.subs=10, max.subs=30,
                                 dict=codon.dict, spec.cond=TRUE, spec.region=30:60)
 special_seq <- paste(special_seq, collapse = "")
 onehot_instance <-  seq_encoding_label(char_sequence = special_seq,
-                                          maxlen = 400,
+                                          maxlen = 477,
                                           start_ind = 1,
                                           vocabulary = c("A", "C", "G", "T"))
 head(onehot_instance[1,,])
-pred <- predict(model, onehot_instance, verbose = 0)
+pred <- predict(model39, onehot_instance, verbose = 0)
 pred
 ig <- integrated_gradients(
   input_seq = onehot_instance,
   baseline_type = "shuffle",
   target_class_idx = 3,
-  model = model,
+  model = model39,
   num_baseline_repeats = 10)
 
 heatmaps_integrated_grad(integrated_grads = ig,
                          input_seq = onehot_instance)
 
 abs_sum <- rowSums(abs(as.array(ig)))
-df <- data.frame(abs_sum = abs_sum, position = 1 : 400)
-ggplot(df, aes(x = position, y = abs_sum)) + geom_smooth() + geom_point()
+df <- data.frame(abs_sum = abs_sum, position = 1 : 477)
+ggplot(df, aes(x = position, y = abs_sum)) + geom_rect(aes(xmin = 90, xmax = 180, ymin = -Inf, ymax = Inf), fill = "lightblue", alpha = 0.2) + geom_smooth(method = "auto") + geom_point() + theme_bw()
 ```
