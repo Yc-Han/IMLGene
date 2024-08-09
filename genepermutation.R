@@ -45,11 +45,12 @@ triplets_keying <- function(triplets, dict=all.dict) {
   return(keys)
 }
 
-permute_sequence <- function(sequence, keyed_sequence, type="ok",
+permute_sequence <- function(sequence, type="ok",
                              min.subs, max.subs,
                              dict=codon.dict, spec.cond=FALSE,
                              spec.region=NULL) {
   mutable_sequence <- sequence
+  keyed_sequence <- triplets_keying(mutable_sequence, dict)
   num.sub <- sample(min.subs:max.subs, 1)
   if (spec.cond) {
     sub.indices <- sample(spec.region, num.sub)
@@ -80,7 +81,7 @@ permute_sequence <- function(sequence, keyed_sequence, type="ok",
   return(mutable_sequence)
 }
 
-GenePermutation <- function(sequence, keyed_sequence, num.perm,
+GenePermutation <- function(sequence, num.perm,
                             min.subs, max.subs,
                             dict=codon.dict,
                             spec.region=NULL) {
@@ -90,19 +91,19 @@ GenePermutation <- function(sequence, keyed_sequence, num.perm,
   )
   for (i in 1:num.perm) {
     label <- sample(c("normal", "abnormal", "special"), size = 1) #, prob = c(0.6, 0.2, 0.2))
-    permuted_seq <- permute_sequence(sequence, keyed_sequence=keyed_sequence,
+    permuted_seq <- permute_sequence(sequence,
                                      type="ok", min.subs=min.subs,
                                      max.subs=max.subs,
                                      dict=dict, spec.cond=FALSE,
                                      spec.region=NULL)
     if (label == "abnormal") {
-      permuted_seq <- permute_sequence(permuted_seq, keyed_sequence=keyed_sequence,
+      permuted_seq <- permute_sequence(permuted_seq,
                                        type="func", min.subs=min.subs,
                                        max.subs=max.subs,
                                        dict=dict, spec.cond=FALSE,
                                        spec.region=spec.region)
     } else if (label == "special") {
-      permuted_seq <- permute_sequence(permuted_seq, keyed_sequence=keyed_sequence,
+      permuted_seq <- permute_sequence(permuted_seq,
                                        type="func", min.subs=min.subs,
                                        max.subs=max.subs,
                                        dict=dict, spec.cond=TRUE,
