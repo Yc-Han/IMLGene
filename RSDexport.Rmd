@@ -1,0 +1,139 @@
+---
+title: "RSDexport"
+author: "Yichen Han"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r pkgs, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+library(deepG)
+library(ggplot2)
+library(microseq)
+library(seqinr)
+library(dplyr)
+library(caret)
+set.seed(42)
+library(reticulate)
+use_python("E:/miniconda/envs/r-reticulate/python.exe", required = TRUE)
+source("genepermutation.R")
+rsd <- seqinr::read.fasta("rsd.FASTA", seqtype = "DNA")
+rsd <- toupper(unlist(seqinr::getSequence(rsd)))
+triplets <- tokenize_triplets(rsd)
+keyed <- triplets_keying(triplets)
+```
+
+# Experiment 37
+
+Spec.region excluded for "abnormal". Functional change not guaranteed.
+
+Call: `GenePermutation(triplets, keyed, num.perm=15000, min.subs=10, max.subs=30, spec.region=30:60)`
+
+```{r load model}
+checkpoint_path <- file.path("checkpoints")
+dir_path <- file.path("outputs")
+run_name <- "rsd-permutation_37"
+modelloaded <- load_cp(paste0(checkpoint_path, "/", run_name), 
+                 cp_filter = "acc")
+model <- load_cp(paste0(checkpoint_path, "/", run_name), 
+                 cp_filter = "last_ep")
+```
+## Model with best ACC
+
+```{r evaluate}
+path_special_test <- file.path("special/test")
+path_normal_test <- file.path("normal/test")
+path_abnormal_test <- file.path("abnormal/test")
+eval_model <- evaluate_model(path_input = c(path_normal_test,
+  path_abnormal_test, path_special_test),
+  model = modelloaded,
+  batch_size = 64,
+  step = 5,
+  vocabulary_label = list(c("normal", "abnormal", "special")),
+  number_batches = 10,
+  mode = "label_folder",
+  verbose = FALSE
+)
+
+eval_model
+```
+
+```{r ig best acc}
+special_seq <- permute_sequence(triplets, keyed, type="ok", min.subs=5, max.subs=30,
+                                dict=codon.dict, spec.cond=FALSE, spec.region=NULL)
+special_seq <- permute_sequence(special_seq, keyed, type="func", min.subs=5, max.subs=30,
+                                dict=codon.dict, spec.cond=TRUE, spec.region=30:60)
+special_seq <- paste(special_seq, collapse = "")
+onehot_instance <-  seq_encoding_label(char_sequence = special_seq,
+                                          maxlen = 400,
+                                          start_ind = 1,
+                                          vocabulary = c("A", "C", "G", "T"))
+head(onehot_instance[1,,])
+pred <- predict(model, onehot_instance, verbose = 0)
+pred
+ig <- integrated_gradients(
+  input_seq = onehot_instance,
+  baseline_type = "shuffle",
+  target_class_idx = 3,
+  model = modelloaded,
+  num_baseline_repeats = 10)
+
+heatmaps_integrated_grad(integrated_grads = ig,
+                         input_seq = onehot_instance)
+
+abs_sum <- rowSums(abs(as.array(ig)))
+df <- data.frame(abs_sum = abs_sum, position = 1 : 400)
+ggplot(df, aes(x = position, y = abs_sum)) + geom_smooth() + geom_point()
+```
+
+## Model at last Epoch
+
+```{r evaluate2}
+path_special_test <- file.path("special/test")
+path_normal_test <- file.path("normal/test")
+path_abnormal_test <- file.path("abnormal/test")
+eval_model <- evaluate_model(path_input = c(path_normal_test,
+  path_abnormal_test, path_special_test),
+  model = model,
+  batch_size = 64,
+  step = 5,
+  vocabulary_label = list(c("normal", "abnormal", "special")),
+  number_batches = 10,
+  mode = "label_folder",
+  verbose = FALSE
+)
+
+eval_model
+```
+```{r ig epoch}
+special_seq <- permute_sequence(triplets, keyed, type="ok", min.subs=5, max.subs=30,
+                                dict=codon.dict, spec.cond=FALSE, spec.region=NULL)
+special_seq <- permute_sequence(special_seq, keyed, type="func", min.subs=5, max.subs=30,
+                                dict=codon.dict, spec.cond=TRUE, spec.region=30:60)
+special_seq <- paste(special_seq, collapse = "")
+onehot_instance <-  seq_encoding_label(char_sequence = special_seq,
+                                          maxlen = 400,
+                                          start_ind = 1,
+                                          vocabulary = c("A", "C", "G", "T"))
+head(onehot_instance[1,,])
+pred <- predict(model, onehot_instance, verbose = 0)
+pred
+ig <- integrated_gradients(
+  input_seq = onehot_instance,
+  baseline_type = "shuffle",
+  target_class_idx = 3,
+  model = model,
+  num_baseline_repeats = 10)
+
+heatmaps_integrated_grad(integrated_grads = ig,
+                         input_seq = onehot_instance)
+
+abs_sum <- rowSums(abs(as.array(ig)))
+df <- data.frame(abs_sum = abs_sum, position = 1 : 400)
+ggplot(df, aes(x = position, y = abs_sum)) + geom_smooth() + geom_point()
+```
