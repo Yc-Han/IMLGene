@@ -40,6 +40,8 @@ test <- GenePermutation(triplets, keyed, num.perm=15000, min.subs=10, max.subs=3
 test <- test %>%
   mutate(seq = sapply(seq, paste, collapse = ""))
 table(test$label)
+# save test as csv
+# write.csv(test, "synthetic data at exp39.csv")
 ```
 
 ```{r split}
