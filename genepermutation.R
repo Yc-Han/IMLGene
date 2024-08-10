@@ -50,12 +50,18 @@ permute_sequence <- function(sequence, type="ok",
                              dict=codon.dict, spec.cond=FALSE,
                              spec.region=NULL) {
   mutable_sequence <- sequence
-  keyed_sequence <- triplets_keying(mutable_sequence, dict)
+  keyed_sequence <- triplets_keying(mutable_sequence, all.dict)
   num.sub <- sample(min.subs:max.subs, 1)
   if (spec.cond) {
     sub.indices <- sample(spec.region, num.sub)
   } else {
-    all_indices <- 1:(length(mutable_sequence) - 1)  # Exclude the last index by default
+    all_indices <- 1:length(mutable_sequence)
+    # Check if '*' exists in keyed_sequence and find its index
+    if ('*' %in% keyed_sequence) {
+      k <- which(keyed_sequence == '*')
+      # Remove the index k from all_indices
+      all_indices <- all_indices[-k]
+    }
     eligible_indices <- setdiff(all_indices, spec.region)
     sub.indices <- sample(eligible_indices, num.sub)
       #sample from not spec.region, and not the last one of the vector
