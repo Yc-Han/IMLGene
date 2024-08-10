@@ -33,15 +33,20 @@ rsd <- toupper(unlist(seqinr::getSequence(rsd)))
 ```
 
 ```{r genepermutation}
-triplets <- tokenize_triplets(rsd)
-keyed <- triplets_keying(triplets)
-test <- GenePermutation(triplets, num.perm=15000, min.subs=10, max.subs=30,
-                        spec.region=30:60)
-test <- test %>%
-  mutate(seq = sapply(seq, paste, collapse = ""))
-table(test$label)
-# save test as csv
-# write.csv(test, "synthetic data corrected.csv")
+# if synthetic data at exp39.csv exists, read it in as test, skip this
+if (!file.exists("synthetic data at exp39.csv")) {
+  triplets <- tokenize_triplets(rsd)
+  keyed <- triplets_keying(triplets)
+  test <- GenePermutation(triplets, num.perm=15000, min.subs=10, max.subs=30,
+                          spec.region=30:60)
+  test <- test %>%
+    mutate(seq = sapply(seq, paste, collapse = ""))
+  # save test as csv
+  write.csv(test, "synthetic data at exp39.csv")
+} else {
+  test <- read.csv("synthetic data at exp39.csv")
+}
+  table(test$label)
 ```
 
 ```{r split}

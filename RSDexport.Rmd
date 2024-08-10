@@ -70,12 +70,12 @@ eval_model <- evaluate_model(path_input = c(path_normal_test,
 eval_model
 ```
 ```{r ig epoch}
-special_seq <- permute_sequence(triplets, type="ok", min.subs=5, max.subs=30,
+instance <- permute_sequence(triplets, type="ok", min.subs=5, max.subs=30,
                                 dict=codon.dict, spec.cond=FALSE, spec.region=NULL)
-special_seq <- permute_sequence(special_seq, type="func", min.subs=5, max.subs=30,
+instance <- permute_sequence(instance, type="func", min.subs=5, max.subs=30,
                                 dict=codon.dict, spec.cond=TRUE, spec.region=30:60)
-special_seq <- paste(special_seq, collapse = "")
-onehot_instance <-  seq_encoding_label(char_sequence = special_seq,
+instance_pasted <- paste(instance, collapse = "")
+onehot_instance <-  seq_encoding_label(char_sequence = instance_pasted,
                                           maxlen = 477,
                                           start_ind = 1,
                                           vocabulary = c("A", "C", "G", "T"))
@@ -113,16 +113,16 @@ df_mod <- df %>%
     abs_sum_max = max(abs_sum)
   )
 
-# Split special_seq (a string) into triplets (every third character)
-chars <- strsplit(special_seq, "")[[1]]
+# Split instance (a string) into triplets (every third character)
+chars <- strsplit(instance_pasted, "")[[1]]
 
 # Create triplets
-trip_spec <- sapply(seq(1, length(chars), by = 3), function(i) {
+trip_instance <- sapply(seq(1, length(chars), by = 3), function(i) {
   paste(chars[i:min(i+2, length(chars))], collapse = "")
 })
 
-# Get the index of sequences at which trip_spec != triplets
-index <- which(trip_spec != triplets)
+# Get the index of sequences at which trip_instance != triplets
+index <- which(trip_instance != triplets)
 
 # Plot the results with different smooth lines for sum, median, mean, and max
 ggplot(df_mod, aes(x = group)) +
@@ -145,30 +145,48 @@ mean_codon <- sapply(1:3, function(i) {
   mean(df$abs_sum[seq(i, 477, by = 3)])
 })
 # plot with line. x:1,2,3, y: mean_codon
-ggplot(data = data.frame(x = 1:3, y = mean_codon), aes(x = x, y = y)) +
+ggplot(data = data.frame(x = 1:3, y = log(mean_codon)), aes(x = x, y = y)) +
   geom_line() +
   geom_point() +
   theme_bw() +
-  labs(x = "Codon Position", y = "Mean of Locus Abs Sum") +
+  labs(x = "Codon Position", y = "Log of Mean Locus Abs Sum") +
   # x tick only 1,2,3, integer
   scale_x_continuous(breaks = 1:3, minor_breaks = NULL, labels = c("1", "2", "3"))
+
+# Separate the abs_sum data by codon positions
+codon_data <- data.frame(
+  position = rep(1:3, each = length(df$abs_sum) / 3),
+  abs_sum = unlist(lapply(1:3, function(i) df$abs_sum[seq(i, 477, by = 3)]))
+)
+
+# Box plot for each codon position
+ggplot(codon_data, aes(x = factor(position), y = log(abs_sum))) +
+  geom_boxplot() +
+  theme_bw() +
+  labs(x = "Codon Position", y = "Log of Locus Abs Sum") +
+  scale_x_discrete(labels = c("1", "2", "3"))
+
+lm_model <- lm(log(abs_sum) ~ factor(position), data = codon_data)
+
+# Summarize the linear model
+summary(lm_model)
 ```
 NB: plot generated with considerable randomness and variance.
 
 ```{r bykey}
-keyed_spec <- triplets_keying(trip_spec)
-df_keyed <- cbind(keyed_spec, trip_spec, df_mod)
-# mutate two colmuns: cod1 is the first character in trip_spec, cod23 is the 2-3 chars in trip_spec
+keyed_instance <- triplets_keying(trip_instance)
+df_keyed <- cbind(keyed_instance, trip_instance, df_mod)
+# mutate two colmuns: cod1 is the first character in trip_instance, cod23 is the 2-3 chars in trip_instance
 df_keyed <- df_keyed %>%
-  mutate(cod1 = substr(trip_spec, 1, 1),
-         cod23 = substr(trip_spec, 2, 3))
+  mutate(cod1 = substr(trip_instance, 1, 1),
+         cod23 = substr(trip_instance, 2, 3))
 df_keyed <- df_keyed %>%
-  group_by(keyed_spec) %>%
+  group_by(keyed_instance) %>%
   mutate(value = mean(abs_sum_sum))
 
 ggplot(df_keyed, aes(x = cod1, y = cod23, fill = value)) +
   geom_tile() +
-  geom_text(aes(label = keyed_spec), color = "black", size = 3) +
+  geom_text(aes(label = keyed_instance), color = "black", size = 3) +
   scale_fill_gradient2(low = "blue", mid = "lightgrey", high = "red", midpoint = 0.002) + 
   theme_bw() +
   labs(fill = "Average Sum\nof locus Abs Sum",
@@ -183,22 +201,26 @@ ggplot(df_keyed, aes(x = cod1, y = cod23, fill = value)) +
 cor_values <- acf(df_mod$abs_sum_sum, lag.max = 159, plot = TRUE)
 ```
 
+**Codon Synonym Similarity**
+
+**CSS score** by Durrant & Bhatt:
+$$
+CSS := \frac{1}{k}\sum_{i=1}^k \hat{\sigma}_i
+$$
+
+Null distribution approximated by random AA substitution.
+
+**CSS score using coefficient of variance:**
+$$
+CSS_{CV} := \frac{1}{k}\sum_{i=1}^k \frac{\hat{\sigma}_i}{\hat{\mu}_i}
+$$
+
+**Positional Codon Synonym Similarity score: ** perform ok-mutate based on instance. Group aggregated IG scores (sum) by their AA position, and calculate the standard deviation of the mean IG score for each triplet, corrected by its mean and scaled using inverse transformation. => No distribution needed, if near 1, then low variability.
+$$
+\text{PCSS} := \frac{1}{N}\sum_{i=1}^N \frac{1}{1 + \alpha \cdot \hat{c}_v}, \ \ \hat{c}_v=\frac{\hat{\sigma}_i}{\hat{\mu}_i}, \ N=\frac{n}{3}
+$$
+
 ```{r css, cache=TRUE}
-instance <- permute_sequence(triplets, type="ok", min.subs=10, max.subs=30,
-                                dict=codon.dict, spec.cond=FALSE, spec.region=NULL)
-instance <- permute_sequence(instance, type="func", min.subs=10, max.subs=30,
-                                dict=codon.dict, spec.cond=TRUE, spec.region=30:60)
-# begin
-instance_pasted <- paste(instance, collapse = "")
-chars <- strsplit(instance_pasted, "")[[1]]
-trip_instance <- sapply(seq(1, length(chars), by = 3), function(i) {
-  paste(chars[i:min(i+2, length(chars))], collapse = "")
-})
-keyed_instance <- triplets_keying(trip_instance)
-onehot_instance <-  seq_encoding_label(char_sequence = instance_pasted,
-                                          maxlen = 477,
-                                          start_ind = 1,
-                                          vocabulary = c("A", "C", "G", "T"))
 ig_instance <- integrated_gradients(
   input_seq = onehot_instance,
   baseline_type = "shuffle",
@@ -213,12 +235,12 @@ df_mod <- df %>%
   summarise(
     abs_sum_mean = mean(abs_sum)
   )
-df_keyed <- cbind(keyed_instance, trip_instance, df_mod)
+df_k <- cbind(keyed_instance, trip_instance, df_mod)
 # delete row if keyed_instance in "M","W"
-df_keyed <- df_keyed %>%
+df_k <- df_k %>%
   filter(!(keyed_instance %in% c("M", "W", "*")))
 # groupby keyed_instance, calculate std of abs_sum_mean using summary
-df_std <- df_keyed %>%
+df_std <- df_k %>%
   group_by(keyed_instance) %>%
   summarise(std = sd(abs_sum_mean) / mean(abs_sum_mean))
 css_instance_init <- mean(df_std$std, na.rm=TRUE)
@@ -268,14 +290,14 @@ for (i in 1:100) {
       abs_sum_mean = mean(abs_sum)
     )
   
-  df_keyed <- cbind(keyed_instance, trip_instance, df_mod)
+  df_k <- cbind(keyed_instance, trip_instance, df_mod)
   
   # Delete rows where keyed_instance is "M", "W", or "*"
-  df_keyed <- df_keyed %>%
+  df_k <- df_k %>%
     filter(!(keyed_instance %in% c("M", "W", "*")))
   
   # Group by keyed_instance and calculate the standard deviation of abs_sum_mean
-  df_std <- df_keyed %>%
+  df_std <- df_k %>%
     group_by(keyed_instance) %>%
     summarise(std = sd(abs_sum_mean) / mean(abs_sum_mean))
   
@@ -296,4 +318,162 @@ ggplot(dfcss, aes(x = CSS)) +
   # a dotted vertical line of x=css_instance_init
   geom_vline(xintercept = css_instance_init, linetype = "dotted", color = "red", lwd=1) +
   labs(x = "CSS using Coefficient of Variance", y = "Density")
+```
+
+```{r PCSIV1, cache=TRUE}
+# ok-mutate based on instance, 100 times, saved to pcss_df
+# just use permute_sequence, nothing else
+pcss_df <- data.frame(permuted = instance_pasted)
+for (i in 1:99) {
+  permuted_instance <- permute_sequence(instance, type = "ok", min.subs = 80,
+                                        max.subs = 120, dict = codon.dict,
+                                        spec.cond = FALSE, spec.region = NULL)
+  permuted_instance <- paste(permuted_instance, collapse = "")
+  pcss_df <- rbind(pcss_df, data.frame(permuted = I(list(permuted_instance))))
+}
+list_onehot <- lapply(pcss_df$permuted, function(x) {
+  seq_encoding_label(char_sequence = x, maxlen = 477, start_ind = 1, vocabulary = c("A", "C", "G", "T"))
+})
+```
+
+```{r PCSIV2, cache=TRUE}
+csv_file_path <- "pcssdata.csv"
+
+# Check if the CSV file already exists
+if (file.exists(csv_file_path)) {
+  # If it exists, read the CSV into result_df
+  result_df <- read.csv(csv_file_path)
+  message("Loaded result_df from existing CSV file.")
+} else {
+# Initialize an empty dataframe with the position column
+  result_df <- data.frame(position = 1:477)
+
+# Loop through each one-hot encoded instance in the list
+  for (i in seq_along(list_onehot)) {
+    onehot_instance <- list_onehot[[i]]
+  
+  # Compute Integrated Gradients
+    ig <- integrated_gradients(
+      input_seq = onehot_instance,
+      baseline_type = "shuffle",
+      target_class_idx = 2,
+      model = model,
+      num_baseline_repeats = 50
+    )
+  
+  # Compute the absolute sum of the IG scores
+    abs_sum <- rowSums(abs(as.array(ig)))
+  
+  # Add the abs_sum as a new column in the result_df
+    result_df[[paste0("abssum", i)]] <- abs_sum
+  }
+}
+```
+
+```{r PCSIV3, cache=TRUE}
+calculate_mean_every_three_rows <- function(df) {
+  # Calculate the number of groups (each group will consist of three rows)
+  n_groups <- nrow(df) %/% 3
+  
+  # Initialize an empty list to store the means
+  mean_list <- list()
+  
+  # Loop through each group and calculate the mean for each column
+  for (i in 1:n_groups) {
+    # Select the three rows corresponding to the current group
+    rows <- df[((i-1) * 3 + 1):(i * 3), ]
+    
+    # Calculate the mean for each column in the current group
+    mean_row <- colSums(rows)
+    
+    # Append the result to the list
+    mean_list[[i]] <- mean_row
+  }
+  
+  # Combine the results into a new dataframe
+  mean_df <- do.call(rbind, mean_list)
+  
+  return(mean_df)
+}
+
+# Apply the function to result_df
+result_df_mean <- calculate_mean_every_three_rows(result_df)
+
+# Convert the result to a data frame with appropriate column names
+result_df_mean <- as.data.frame(result_df_mean)
+names(result_df_mean) <- names(result_df)
+result_df_mean <- result_df_mean %>%
+  select(-X, -position)
+
+# Function to calculate the coefficient of variance (CV) for each row
+calculate_cv_rowwise <- function(df) {
+  # Apply the function to calculate CV (sd/mean) row-wise
+  cv <- apply(df[-1], 1, function(row) {
+    row_sd <- sd(row)
+    row_mean <- mean(row)
+    if (row_mean != 0) {
+      return(row_sd / row_mean)
+    } else {
+      return(NA)  # Handle division by zero
+    }
+  })
+  return(cv)
+}
+invtrans <- function(x) {
+  return(1 / (1 + x))
+}
+
+# Apply the function to result_df_mean (excluding the first column "position")
+rowwise_std <- calculate_cv_rowwise(result_df_mean)
+pcss_final <- data.frame(position=1:length(rowwise_std), key = keyed_instance,
+                         trip_instance, sig.cv=invtrans(rowwise_std))
+
+# plot pcss_final, x:position, y:cv, draw a horizontal line for the mean(pcss_final$cv), and mark its y coordinate
+ggplot(pcss_final, aes(x = position, y = sig.cv)) +
+  geom_line() +
+  geom_hline(yintercept = mean(pcss_final$sig.cv), linetype = "dashed", lwd=1, color = "red") +
+  geom_point() +
+  theme_bw() +
+  labs(x = "AA Index", y = "PCSS Score") +
+  scale_x_continuous(breaks = seq(1, 477, by = 50))
+```
+
+```{r pcss4}
+pcss_final <- pcss_final %>%
+  mutate(cod1 = substr(trip_instance, 1, 1),
+         cod23 = substr(trip_instance, 2, 3))
+pcss_final <- pcss_final %>%
+  group_by(key) %>%
+  mutate(value = mean(sig.cv))
+
+ggplot(pcss_final, aes(x = cod1, y = cod23, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = key), color = "black", size = 3) +
+  scale_fill_gradient2(low = "blue", mid = "lightgrey", high = "red", midpoint = 0.73) + 
+  theme_bw() +
+  labs(fill = "Average PCSS",
+       x = "First Codon Position",
+       y = "Second and Third Codon Position") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        strip.text = element_text(face = "bold"),
+        panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+```
+
+```{r correlation}
+# correlation of df_keyed$abs_sum_sum vs. pcss_final$value
+data_cor <- left_join(df_keyed, pcss_final, by = c("group" = "position"))
+# keep value.y, vlaue.x unique: groupby keyed_instance and select the first row of each group
+data_cor <- data_cor %>%
+  group_by(keyed_instance) %>%
+  slice(1)
+cor.test(data_cor$value.y, data_cor$value.x, method = "pearson")
+plot(data_cor$value.x, data_cor$value.y, 
+     xlab = "IG Sum", 
+     ylab = "PCSS Score")
+lmpcss <- lm(data_cor$value.y ~ data_cor$value.x)
+abline(lmpcss, col = "red")
+summary(lmpcss)
+# 4x4 grid
+par(mfrow=c(2,2))
+plot(lmpcss, which=1:4)
 ```
