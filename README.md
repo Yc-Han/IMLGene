@@ -1,9 +1,3 @@
----
-editor_options: 
-  markdown: 
-    wrap: 72
----
-
 **Update of Progress:**
 
 as of 12.08.
