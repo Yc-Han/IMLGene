@@ -6,7 +6,7 @@ output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = FALSE)
 ```
 
 ```{r pkgs, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
@@ -22,6 +22,15 @@ use_python("E:/miniconda/envs/r-reticulate/python.exe", required = TRUE)
 source("genepermutation.R")
 source("ig_modified.R")
 ```
+
+## Flexible Baseline
+
+We modified the source code of `deepG::integrated_gradients()` so that it now accepts any one-hot coded baseline array as an argument, thus allowing flexible comparison. It is currently only modified for the simplest case: no repeat, and input instance and baseline are not a list.
+
+To showcase that a correctly chosen baseline can be crucial for model explanations, we load the same model as in RSDexport, and set two baselines:
+
+1.  natural baseline: the documented gene sequence of *rsd*.
+2.  abnormal baseline: a randomly functionally permuted copy, which should be predicted as "abnormal" by the model.
 
 ```{r baseline1}
 # wild type baseline
@@ -63,6 +72,18 @@ model <- load_cp(paste0(checkpoint_path, "/", run_name),
                  cp_filter = "last_ep")
 ```
 
+After modification, the IG call is the following:
+
+```{r igexample, eval=FALSE, echo=TRUE}
+ig <- ig_modified(
+  input_seq = onehot_instance,
+  baseline_type = "modify",
+  baseline_onehot = onehot_baseline,
+  target_class_idx = 3,
+  model = model,
+  num_baseline_repeats = 1)
+```
+
 ```{r ig1}
 instance <- permute_sequence(triplets, type="ok", min.subs=10, max.subs=30,
                                 dict=codon.dict, spec.cond=FALSE, spec.region=NULL)
@@ -92,6 +113,8 @@ df <- data.frame(abs_sum = abs_sum, sum=sum, position = 1 : 477)
 ggplot(df, aes(x = position, y = sum)) + geom_rect(aes(xmin = 90, xmax = 180, ymin = -Inf, ymax = Inf), fill = "lightblue", alpha = 0.2) + geom_point() + theme_bw()
 ```
 
+We see exactly what we expected -- high importance assigned to the targeted area, while irrelevant positions usually have gradients near 0.
+
 ```{r ig2}
 ig2 <- ig_modified(
   input_seq = onehot_instance,
@@ -110,6 +133,8 @@ df2 <- data.frame(abs_sum = abs_sum, sum=sum, position = 1 : 477)
 
 ggplot(df2, aes(x = position, y = sum)) + geom_rect(aes(xmin = 90, xmax = 180, ymin = -Inf, ymax = Inf), fill = "lightblue", alpha = 0.2) + geom_point() + theme_bw()
 ```
+
+This is less clear when the baseline is the abnormal type, but we can see the methods clearly captures what matters and what does not.
 
 ```{r compress1, message=FALSE}
 df_mod <- df %>%
@@ -182,6 +207,8 @@ ggplot(df2_mod, aes(x = group)) +
        title = "Compared to abnormal")
 ```
 
+We display it again after compressing the information. Vertical lines indicate substitution spots.
+
 ```{r wobbleness}
 mean_codon <- sapply(1:3, function(i) {
   mean(df$sum[seq(i, 477, by = 3)])
@@ -214,6 +241,8 @@ lm_model <- lm(sum ~ factor(position), data = codon_data)
 # Summarize the linear model
 summary(lm_model)
 ```
+
+Wobbleness is again present, this time with relative confidence. Whether this effect is persistent across scenarios, is a topic worth further studying. But we need to recognize the high randomness behind it.
 
 ```{r PCSIV1, cache=TRUE}
 # ok-mutate based on instance, 100 times, saved to pcss_df
@@ -330,5 +359,7 @@ ggplot(pcss_final, aes(x = position, y = sig.cv)) +
   geom_hline(yintercept = mean(pcss_final$sig.cv, na.rm=TRUE), linetype = "dashed", lwd=1, color = "red") +
   geom_point() +
   theme_bw() +
-  labs(x = "AA Index", y = "PCSS Score")
+  labs(x = "AA Index", y = "PCSC Score")
 ```
+
+We see that the model under correct explanation achieves much less consistency in treating synonymous codons than that of RSDexport report. The consistency is only about 0.5. Given the satisfactory size of data (15000), we speculate that the model can be improved in this regard.

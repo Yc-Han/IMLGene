@@ -6,7 +6,7 @@ output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = FALSE)
 ```
 
 ```{r pkgs, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
@@ -25,6 +25,12 @@ use_python("E:/miniconda/envs/r-reticulate/python.exe", required = TRUE)
 source("genepermutation.R")
 source("ig_modified.R")
 ```
+
+After modifying IG implementation and testing it on synthetic data, we now want to work with real data. We choose a rather simple task as already done by the package dvp-team: 16S rRNA gene detection vs. bacterial genomes.
+
+## Pretrained Model
+
+We load the best model as instructed by the online tutorial.
 
 ```{r setpath}
 # input data are divided into train, validation sets
@@ -68,6 +74,11 @@ eval_model <- evaluate_model(path_input = path_input,
 
 eval_model
 ```
+We see that the model has very high accuracy.
+
+We then load a random 16S gene sequence from the validation data, and load a bacteria genome from the validation data as our baseline. We extract positions 499-998 (500 bp) for both sequences.
+
+We then perform modified IG.
 
 ```{r igtest}
 # instance is a randomly chosen fasta file from 16s validation
@@ -102,37 +113,57 @@ ggplot(df, aes(x = position, y = abs_sum)) + geom_point() + geom_smooth() + them
 ggplot(df, aes(x = position, y = sum)) + geom_point() + theme_bw()
 ```
 
-The emphasis on the tail is recurrent whatever instance, baseline, or sequence starting index. We speculate the model to be not biologically trustworthy. We thus retrain a model.
+We noticed approximately 0 importance assigned to the first 300 bp, and a monotonic rise in the last 200. We repeat the process on different targets.
 
-```{r build}
-#model <- create_model_lstm_cnn(
-#  maxlen = 600,
-#  layer_lstm = NULL,
-#  layer_dense = c(2L),
-#  vocabulary_size = 4,
-#  kernel_size = c(12, 12, 12),
-#  filters = c(32, 64, 128),
-#  pool_size = c(3, 3, 3),
-#  learning_rate = 0.001)
+We discovered that the emphasis on the tail is recurrent whatever instance, baseline, or sequence starting index. This does not reflect the true traits of 16S rRNA gene, and is not logical.
 
-#run_name <- "16S_vs_bacteria_full_1"
+We noticed the model specifications:
 
-#hist <- train_model(train_type = "label_folder",
-#  model = model,
-#  path = c(path_16S_train, path_bacteria_train), # path to training files
-#  path_val = c(path_16S_validation, path_bacteria_validation), # path to validation files
-#  vocabulary_label = c("16s", "bacteria"),
-#  path_checkpoint = checkpoint_path,
-#  train_val_ratio = 0.2,
-#  run_name = run_name,
-#  batch_size = 256, # number of samples to process in parallel
-#  steps_per_epoch = 25, # 1 epoch = 25 batches
-#  epochs = 8,
-#  step = c(6, 30),
-#  proportion_per_seq = c(0.95, 0.05)) # randomly sample 95% from 16S files and
-                                       # 5% from bacteria file    
-#plot(hist)
+```{r modelspec, eval=FALSE, echo=TRUE}
+model <- create_model_lstm_cnn(
+  maxlen = 500, # not divisible by 3
+  layer_lstm = NULL,
+  layer_dense = c(2L),
+  vocabulary_size = 4,
+  kernel_size = c(12, 12, 12),
+  filters = c(32, 64, 128),
+  pool_size = c(3, 3, 3),
+  learning_rate = 0.001)
+
+train_model(train_type = "label_folder",
+  model = model,
+  path = c(path_16S_train, path_bacteria_train),
+  path_val = c(path_16S_validation, path_bacteria_validation),
+  vocabulary_label = c("16s", "bacteria"),
+  path_checkpoint = checkpoint_path,
+  train_val_ratio = 0.2,
+  run_name = run_name,
+  batch_size = 256,
+  steps_per_epoch = 25,
+  epochs = 8, 
+  save_best_only = FALSE,
+  step = c(100, 500), # take sample every 100 step for 16S and every 500 for bacteria  
+  proportion_per_seq = c(0.95, 0.05))
 ```
+
+The length is not divisible by 3, and when the instance is introduced after `substr`, the original codon structure is broken, and the model did very likely not capture codon structure during the training at all.
+
+We speculate the model to be not biologically trustworthy. We thus retrain a model.
+
+```{r build, eval=FALSE, echo=TRUE}
+model <- create_model_lstm_cnn(
+  maxlen = 600, # size divisible by 3
+  ...)
+
+train_model(train_type = "label_folder",
+  ...
+  step = c(6, 30), # smaller steps, divisible by 3
+  ...)
+```
+
+## Retrained Model
+
+We load the model at last epoch:
 
 ```{r reload}
 # load model checkpoint with best validation accuracy
@@ -158,6 +189,7 @@ eval_model <- evaluate_model(path_input = path_input,
 
 eval_model
 ```
+It still has a very high accuracy. We evaluate it again using modified IG.
 
 ```{r ignew}
 instance <- microseq::readFasta('16s/validation/GCF_001986655.1_ASM198665v1_genomic.16s.fasta.fasta')$Sequence[1]
@@ -190,6 +222,10 @@ df <- data.frame(abs_sum = abs_sum, sum=sum, position = 1 : 600)
 ggplot(df, aes(x = position, y = abs_sum)) + geom_point() + geom_smooth() + theme_bw()
 ggplot(df, aes(x = position, y = sum)) + geom_point() + theme_bw()
 ```
+
+This time, the importance is scattered across positions in a more complex way, which reflects the nature of genetic data.
+
+We also visualize the direct sum, since some points persistently have negative gradients. The implication of these is still unknown.
 
 ```{r igmod}
 df_mod <- df %>%
@@ -226,6 +262,8 @@ ggplot(df_mod, aes(x = group)) +
   theme_bw() +
   labs(y = "Sum of IG", color = "Statistic", x = "AA Index")
 ```
+
+Before and after information compression, there are some obvious clustering on the graph. How important / interesting they are is unknown to us, but we extract them here for possible use.
 
 ```{r cluster}
 df_sorted <- df_mod %>% arrange(group)
@@ -297,6 +335,10 @@ hm1 <- ggplot(df_keyed, aes(x = cod1, y = cod23, fill = value)) +
 # hm1
 ```
 
+We further studied wobleness. In this case, more randomness is introduced by the fact that we only calculated IG once. In RSDexport, the average importance almost consistently follow the 2-1-3 structure. Here, we tested some other instances and baselines and wobleness is not always detected.
+
+Here is an example of existing wobbleness.
+
 ```{r wobleness}
 mean_codon <- sapply(1:3, function(i) {
   mean(df$abs_sum[seq(i, 600, by = 3)])
@@ -327,6 +369,10 @@ lm_model <- lm(abs_sum ~ factor(position), data = codon_data)
 # Summarize the linear model
 summary(lm_model)
 ```
+
+## Consistency
+
+We then calculated PCSC score on our data. With an average score at 0.9, we conclude that the model was able to capture synonymous codons and treats them consistently.
 
 ```{r PCSIV1, cache=TRUE}
 # ok-mutate based on instance, 100 times, saved to pcss_df
@@ -443,8 +489,10 @@ ggplot(pcss_final, aes(x = position, y = sig.cv)) +
   geom_hline(yintercept = mean(pcss_final$sig.cv, na.rm=TRUE), linetype = "dashed", lwd=1, color = "red") +
   geom_point() +
   theme_bw() +
-  labs(x = "AA Index", y = "PCSS Score")
+  labs(x = "AA Index", y = "PCSC Score")
 ```
+
+We then generated heatmaps as in RSDexport. The first heatmap visualizes average sum of gradients, the second average consistency based on AA, and the third the "confident importance", which is average sum of gradients multiplied by PCSC score.
 
 ```{r pcss4}
 pcss_final <- pcss_final %>%
@@ -459,7 +507,7 @@ hm2 <- ggplot(pcss_final, aes(x = cod1, y = cod23, fill = value)) +
   geom_text(aes(label = key), color = "black", size = 3) +
   scale_fill_gradient2(low = "blue", mid = "lightgrey", high = "red", midpoint = 0.8) + 
   theme_bw() +
-  labs(fill = "Average PCSS",
+  labs(fill = "Average PCSC",
        x = "First Codon Position",
        y = "Second and Third Codon Position") +
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
@@ -485,6 +533,12 @@ hm3 <- ggplot(combined, aes(x = cod1.x, y = cod23.x, fill = conf)) +
 hm3
 ```
 
+## Feature Selection
+
+We first visualize the average absolute feature importance by position based on our instance.
+
+Points above the 90%-quantile are annotated with their corresponding amino acid.
+
 ```{r imp}
 quantile_90 <- quantile(df_keyed$abs_sum_mean, 0.90)
 df_keyed_above_90 <- df_keyed %>% filter(abs_sum_mean > quantile_90)
@@ -500,3 +554,214 @@ ggplot(df_keyed, aes(x = group, y = abs_sum_mean)) +
   labs(x = "AA Index", y = "Mean Locus Abs Sum")
 ```
 
+We then implemented the feature selection algorithm as by the enhanced IG paper. We do this based on locus level, and sample 50 events for both interest and random group.
+
+We performed t-test row-wise. Since each row was tested only once, no multiple testing is present.
+
+In the end, 43 out of 600 loci are identified as having significantly higher absolute sum of gradients than the random group.
+
+We visualize these pairs, and notice that high importance points are not necessarily helpful in distinguishing instances, since the two curves are very similar in shape.
+
+```{r feature selection, cache=TRUE}
+# randomly sample 20 file names from 16s_features/16s folder (combined as a vector interest_files)
+# then, randomly sample 10 from 16s_features/16s, and 10 from from 16s_features/bacteria (combined as a vector random_files)
+files_16s <- list.files(path = "16s_features/16s", full.names = TRUE)
+files_bacteria <- list.files(path = "16s_features/bacteria", full.names = TRUE)
+set.seed(42)
+interest_files <- sample(files_16s, 50)
+random_files_16s <- sample(files_16s, 28)
+random_files_bacteria <- sample(files_bacteria, 22)
+random_files <- c(random_files_16s, random_files_bacteria)
+interest_sequences <- sapply(interest_files, function(file) {
+  microseq::readFasta(file)$Sequence[1]
+})
+random_sequences <- sapply(random_files, function(file) {
+  microseq::readFasta(file)$Sequence[1]
+})
+interest_substrings <- substr(interest_sequences, 499, 1098)
+random_substrings <- substr(random_sequences, 499, 1098)
+interest_encoded <- lapply(interest_substrings, function(substring) {
+  seq_encoding_label(char_sequence = substring,
+                     maxlen = 600,
+                     start_ind = 1,
+                     vocabulary = c("A", "C", "G", "T"))
+})
+
+# Apply seq_encoding_label to each substring in random_substrings
+random_encoded <- lapply(random_substrings, function(substring) {
+  seq_encoding_label(char_sequence = substring,
+                     maxlen = 600,
+                     start_ind = 1,
+                     vocabulary = c("A", "C", "G", "T"))
+})
+```
+
+```{r fs2, cache=TRUE}
+csv_file_path1 <- "featureimp_16s.csv"
+
+# Check if the CSV file already exists
+if (file.exists(csv_file_path1)) {
+  # If it exists, read the CSV into interest_df
+  interest_df <- read.csv(csv_file_path1)
+  message("Loaded interest_df from existing CSV file.")
+} else {
+# Initialize an empty dataframe with the position column
+  interest_df <- data.frame(position = 1:600)
+
+# Loop through each one-hot encoded instance in the list
+  for (i in seq_along(interest_encoded)) {
+    onehot_instance <- interest_encoded[[i]]
+  
+  # Compute Integrated Gradients
+    igw <- ig_modified(
+      input_seq = onehot_instance,
+      baseline_type = "modify",
+      baseline_onehot = onehot_baseline,
+      target_class_idx = 1,
+      model = model,
+      num_baseline_repeats = 1)
+  
+  # Compute the absolute sum of the IG scores
+    abs_sum <- rowSums(abs(as.array(igw)))
+  
+  # Add the abs_sum as a new column in the interest_df
+    interest_df[[paste0("abssum", i)]] <- abs_sum
+  }
+  write.csv(interest_df, csv_file_path1, row.names = FALSE)
+}
+
+csv_file_path2 <- "featureimp_bacteria.csv"
+
+# Check if the CSV file already exists
+if (file.exists(csv_file_path2)) {
+  # If it exists, read the CSV into random_df
+  random_df <- read.csv(csv_file_path2)
+  message("Loaded random_df from existing CSV file.")
+} else {
+# Initialize an empty dataframe with the position column
+  random_df <- data.frame(position = 1:600)
+
+# Loop through each one-hot encoded instance in the list
+  for (i in seq_along(random_encoded)) {
+    onehot_instance <- random_encoded[[i]]
+  
+  # Compute Integrated Gradients
+    igw <- ig_modified(
+      input_seq = onehot_instance,
+      baseline_type = "modify",
+      baseline_onehot = onehot_baseline,
+      target_class_idx = 1,
+      model = model,
+      num_baseline_repeats = 1)
+  
+  # Compute the absolute sum of the IG scores
+    abs_sum <- rowSums(abs(as.array(igw)))
+  
+  # Add the abs_sum as a new column in the random_df
+    random_df[[paste0("abssum", i)]] <- abs_sum
+  }
+  write.csv(random_df, csv_file_path2, row.names = FALSE)
+}
+```
+
+```{r fs3}
+# Initialize a result data frame to store position, row mean, and p-value
+result_df <- data.frame(
+  position = numeric(),
+  row_mean = numeric(),
+  random_mean = numeric(),
+  p_value = numeric()
+)
+
+# Number of tests for Bonferroni correction
+n_tests <- nrow(interest_df)
+
+# Loop over each row (position) in the data frames
+for (i in 1:n_tests) {
+  
+  # Get the position (object index)
+  position <- interest_df[i, 1]
+  
+  # Calculate the mean of the metrics in the interest_df for this position
+  interest_mean <- mean(as.numeric(interest_df[i, 2:ncol(interest_df)]), na.rm=TRUE)
+  random_mean <- mean(as.numeric(random_df[i, 2:ncol(random_df)]), na.rm=TRUE)
+  # Perform a one-sided t-test comparing interest_df to random_df
+  t_test_result <- t.test(
+    as.numeric(interest_df[i, 2:ncol(interest_df)]), 
+    as.numeric(random_df[i, 2:ncol(random_df)]), 
+    alternative = "greater"
+  )
+  
+  # Extract the p-value
+  p_value <- t_test_result$p.value
+  
+  # Append the results to result_df
+  result_df <- rbind(result_df, data.frame(
+    position = position,
+    row_mean = interest_mean,
+    random_mean = random_mean,
+    p_value = p_value
+  ))
+}
+
+result_df$significance <- ifelse(result_df$p_value < 0.05, "*", "")
+```
+
+```{r fs4}
+selected <- result_df %>% filter(significance == "*")
+# plot row mean and random mean together
+ggplot(result_df, aes(x = position)) +
+  geom_line(aes(y = row_mean, color = "Interest"), alpha = 0.2) +  # Interest mean line
+  geom_line(aes(y = random_mean, color = "Random"), alpha = 0.2) +  # Random mean line
+  geom_point(data = selected, aes(y = row_mean, color = "Interest")) +  # Selected interest mean points
+  geom_point(data = selected, aes(y = random_mean, color = "Random")) +  # Selected random mean points
+  geom_segment(data = selected, aes(xend = position, y = row_mean, yend = random_mean), color = "black") +  # Difference line
+  scale_color_manual(values = c("Interest" = "blue", "Random" = "red"),
+                     labels = c("Interest", "Random")) +
+  theme_bw() +
+  theme(legend.position = "bottom", legend.title = element_blank()) +
+  labs(x = "Locus Index", y = "Mean Locus Abs Sum", subtitle = "Sample Size = 50, Selected 43 out of 600")
+```
+
+We further explore the consitution of those important features. We only extracted the indices, and we compare them with one of the instances and extract the AA position of those points.
+
+At the moment, no noticeable difference in GC content or pattern in AA is detected.
+
+We noticed some consecutive pairs -- loci that are next to each other and are all significant in test. They are extracted for possible study.
+
+```{r fs5}
+# add AApos to selected: rounded position/3, to upper integer
+selected <- selected %>%
+  mutate(AApos = ceiling(position / 3))
+# add trip and key column from df_keyed, indexed by AApos == group, don't add unnecessary cols
+selected_ana <- left_join(selected, df_keyed, by = c("AApos" = "group")) %>%
+  select(position, row_mean, random_mean, p_value, significance, AApos, trip, key)
+
+# extract trip, split each letter into a single string, reshape to a vector of single letter strings
+selected_trip <- selected_ana$trip
+selected_trip <- strsplit(selected_trip, "")
+selected_trip <- unlist(selected_trip)
+table(selected_trip)
+
+selected_key <- selected_ana$key
+table(selected_key)
+
+# extract consecutive pairs: that is if AApos is only +1 compared to the former row
+# also extract the former row
+consecutive <- selected_ana %>%
+  filter(AApos %in% c(13,14,77,78,79,103,104,123,124,190,191))
+consecutive
+consecutive_trip <- consecutive$trip
+consecutive_trip <- strsplit(consecutive_trip, "")
+consecutive_trip <- unlist(consecutive_trip)
+table(consecutive_trip)
+table(consecutive$key)
+```
+
+## Discussion
+
+1. Due to lack of clear patterns in most real-world cases, it seems IG alone, even if correctly calculated, can be very much not informative. Instead of keep improving its theory minimally, it seems more reasonable to come up with methods tailored to genomics that can best utilize those data and provide interpretable or meaningful results. For example, the PCSC score could be a good measurement in explaining the reliability of the model in capturing synonymous codons.
+
+2. The capturing of wobbleness seems to be an interesting topic. It is not clear how it can be used in practice, but it is a good indicator of the model's ability to capture the codon structure. If it can be proved to be universally present in correctly trained models, that would be very ideal.
+
+3. How to work with the selected features? Are they biologically significant? Are they useful in distinguishing instances? (for which we need to adjust the model) These are questions that need to be answered in the future.

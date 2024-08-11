@@ -8,7 +8,7 @@ output:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = FALSE)
 ```
 
 ```{r pkgs, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
@@ -50,7 +50,7 @@ model <- load_cp(paste0(checkpoint_path, "/", run_name),
                  cp_filter = "last_ep")
 ```
 
-## Model at last Epoch
+## Model Evaluation
 
 ```{r evaluate2}
 path_special_test <- file.path("special/test")
@@ -97,6 +97,17 @@ df <- data.frame(abs_sum = abs_sum, position = 1 : 477)
 ggplot(df, aes(x = position, y = abs_sum)) + geom_rect(aes(xmin = 90, xmax = 180, ymin = -Inf, ymax = Inf), fill = "lightblue", alpha = 0.2) + geom_smooth(method = "auto") + geom_point() + theme_bw()
 ```
 
+We notice high importance assigned to the starting region of the sequence, despite most substitutions happening between AA 30 to AA 60.
+
+We speculate that it flows in due to the shuffled baseline – random shuffling almost certainly causes non-synonymous substitution across the sequence. It is enough for the model to look at the beginning to know if it is “abnormal” or not. Ideally, it should be compared with a normal sequence and only the blue marked area should have high importance.
+
+This plot is enough proof for the need of improving the baseline.
+
+
+## Alternative Display
+
+We combine every 3 loci and use methods similar to pooling to aggregate the information. This captures the codon structure. For importance measured by absolute locus gradients sum, all pooling methods have a similar effect.
+
 ```{r igmod}
 # abs_sum <- rowSums(abs(as.array(ig)))
 #df <- data.frame(abs_sum = abs_sum, position = 1 : 477)
@@ -139,6 +150,14 @@ ggplot(df_mod, aes(x = group)) +
   labs(y = "Absolute Sum of IG", color = "Statistic", x = "AA Index")
 ```
 
+## Ideas based on Durrant & Bhatt (2021)
+
+The paper documented average importance of the 3 loci within a codon and found out the highest importance is likely to be assigned to the second locus, while the third (wobble position) receives the least importance.
+
+We were able to replicate this output here, simply based on our synthetic data. However, the paper did not test if the difference is statistically significant. According to our test result, this effect could still be random.
+
+The possible capturing of wobleness, or special emphasis on the second locus, however, indicates some inner workings of our genomic model.
+
 ```{r wobbleness}
 # calculate mean/med of first, second, and third codon positions
 mean_codon <- sapply(1:3, function(i) {
@@ -171,7 +190,7 @@ lm_model <- lm(log(abs_sum) ~ factor(position), data = codon_data)
 # Summarize the linear model
 summary(lm_model)
 ```
-NB: plot generated with considerable randomness and variance.
+The paper also created a heatmap for the average importance for each amino acid across the whole sequence. This method is here replicated. Due to the nature of our synthetic data, it cannot be of use in this report, but might be helpful later.
 
 ```{r bykey}
 keyed_instance <- triplets_keying(trip_instance)
@@ -197,9 +216,13 @@ ggplot(df_keyed, aes(x = cod1, y = cod23, fill = value)) +
         panel.grid.major = element_blank(), panel.grid.minor = element_blank())
 ```
 
+We noticed strong autocorrelation among the averange absolute sums. We speculate this to be a model artifact.
+
 ```{r autocor}
 cor_values <- acf(df_mod$abs_sum_sum, lag.max = 159, plot = TRUE)
 ```
+
+The paper proposed a measurement to quantify the similarity of assigned importance by the IML method to triplets coding the same amino acid.
 
 **Codon Synonym Similarity**
 
@@ -210,15 +233,22 @@ $$
 
 Null distribution approximated by random AA substitution.
 
-**CSS score using coefficient of variance:**
+We argue that this method has many flaws. First of all, the importance measure is unbounded and scaled specific to data and model. The sample variance is scale-sensitive, so that the quantity is not comparable between scenarios. Secondly, CSS score calculates the mean grouped by amino acid across the whole sequence, regardless of their position. In most cases, position on the DNA strand matters more than its corresponding amino acid. Thus, this measure does not capture the positional importance of the amino acid, and delivers less valuable information.
+
+**CSS score using coefficient of variance:** to correct the scaling problem, we use coefficient of variation as the metric.
 $$
 CSS_{CV} := \frac{1}{k}\sum_{i=1}^k \frac{\hat{\sigma}_i}{\hat{\mu}_i}
 $$
+To further improve the method, we propose the following.
 
-**Positional Codon Synonym Similarity score: ** perform ok-mutate based on instance. Group aggregated IG scores (sum) by their AA position, and calculate the standard deviation of the mean IG score for each triplet, corrected by its mean and scaled using inverse transformation. => No distribution needed, if near 1, then low variability.
+The metric should demonstrate how reliably the IML method / the model treats synonymous codons, given that they are on the same position. It should be bounded between 0 and 1, making the quantity easy to interpret and comparable across models and interpretation methods.
+
+**Positional Codon Synonym Consistency score: ** perform ok-mutate based on instance. Group aggregated IG scores (here using sum of absolute gradients sum) by their AA position, and calculate the standard deviation of the mean IG score for each triplet, corrected by its mean and scaled using inverse transformation. => No distribution needed, if near 1, then low variability / high consistency.
 $$
-\text{PCSS} := \frac{1}{N}\sum_{i=1}^N \frac{1}{1 + \alpha \cdot \hat{c}_v}, \ \ \hat{c}_v=\frac{\hat{\sigma}_i}{\hat{\mu}_i}, \ N=\frac{n}{3}
+\text{PCSC} := \frac{1}{N}\sum_{i=1}^N \frac{1}{1 + \alpha \cdot \hat{c}_v}, \ \ \hat{c}_v=\frac{\hat{\sigma}_i}{\hat{\mu}_i}, \ N=\frac{n}{3}
 $$
+
+We also implemented the paper's metric here.
 
 ```{r css, cache=TRUE}
 ig_instance <- integrated_gradients(
@@ -319,6 +349,8 @@ ggplot(dfcss, aes(x = CSS)) +
   geom_vline(xintercept = css_instance_init, linetype = "dotted", color = "red", lwd=1) +
   labs(x = "CSS using Coefficient of Variance", y = "Density")
 ```
+
+Here begins our metric.
 
 ```{r PCSIV1, cache=TRUE}
 # ok-mutate based on instance, 100 times, saved to pcss_df
@@ -434,7 +466,7 @@ ggplot(pcss_final, aes(x = position, y = sig.cv)) +
   geom_hline(yintercept = mean(pcss_final$sig.cv), linetype = "dashed", lwd=1, color = "red") +
   geom_point() +
   theme_bw() +
-  labs(x = "AA Index", y = "PCSS Score") +
+  labs(x = "AA Index", y = "PCSC Score") +
   scale_x_continuous(breaks = seq(1, 477, by = 50))
 ```
 
@@ -451,13 +483,15 @@ ggplot(pcss_final, aes(x = cod1, y = cod23, fill = value)) +
   geom_text(aes(label = key), color = "black", size = 3) +
   scale_fill_gradient2(low = "blue", mid = "lightgrey", high = "red", midpoint = 0.73) + 
   theme_bw() +
-  labs(fill = "Average PCSS",
+  labs(fill = "Average PCSC",
        x = "First Codon Position",
        y = "Second and Third Codon Position") +
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
         strip.text = element_text(face = "bold"),
         panel.grid.major = element_blank(), panel.grid.minor = element_blank())
 ```
+
+We noticed some correlation between AA feature importance and AA importance consistency. We speculate this to be a random effect and more of a model artifact.
 
 ```{r correlation}
 # correlation of df_keyed$abs_sum_sum vs. pcss_final$value
@@ -469,7 +503,7 @@ data_cor <- data_cor %>%
 cor.test(data_cor$value.y, data_cor$value.x, method = "pearson")
 plot(data_cor$value.x, data_cor$value.y, 
      xlab = "IG Sum", 
-     ylab = "PCSS Score")
+     ylab = "PCSC Score")
 lmpcss <- lm(data_cor$value.y ~ data_cor$value.x)
 abline(lmpcss, col = "red")
 summary(lmpcss)
