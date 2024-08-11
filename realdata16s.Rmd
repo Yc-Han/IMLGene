@@ -894,3 +894,75 @@ ggplot(data = df, aes(x = position, y = value)) +
   theme_bw() +
   labs(x = "Position", y = "Mean locus sum")
 ```
+
+We also tried adversarial instance. We replace the selected spots of the instance all with C, and the confidence for 16S rRNA drops from **0.906 to 0.176**! Also replacing them with T reduces the confidence to 0.20. Replacing with A and G is not effective.
+
+```{r adversarial, cache=TRUE}
+adversarial <- onehot_instance
+pred_vor <- predict(model, adversarial, verbose = 0)
+print("Original Prediction: ")
+pred_vor
+adversarial[,selected$position,] <- onehot_instance[,selected$position,]*0
+adversarial[,selected$position, 2] <- 1
+pred_adv <- predict(model, adversarial, verbose = 0)
+print("\nPrediction after substituting important features with C: ")
+pred_adv
+
+### counter-adversarial: replace not selected$position:
+counter <- onehot_instance
+pred_counter_results <- numeric(200)
+# Loop 100 times
+for (i in 1:200) {
+  # Sample indices from not_selected
+  indices <- sample(seq_len(ncol(onehot_instance)), length(selected$position))
+  
+  # Create a counter-adversarial example
+  counter <- onehot_instance
+  counter[,indices,] <- onehot_instance[,indices,]*0
+  counter[,indices, 2] <- 1
+  
+  # Make prediction on the counter-adversarial example
+  pred_counter <- predict(model, counter, verbose = 0)
+  
+  # Store the result for pred_counter[1,1]
+  pred_counter_results[i] <- pred_counter[1,1]
+}
+
+# Calculate the mean of the pred_counter[1,1] values
+mean_pred_counter <- mean(pred_counter_results)
+
+# Print the mean
+print("\nPrediction after substituting same amount of random features with C: ")
+mean_pred_counter
+
+adversarial[,selected$position,] <- onehot_instance[,selected$position,]*0 + 0.25
+pred_adv <- predict(model, adversarial, verbose = 0)
+print("\nPrediction after substituting important features with 0.25:")
+pred_adv
+
+### counter-adversarial: replace not selected$position:
+counter <- onehot_instance
+pred_counter_results <- numeric(200)
+# Loop 100 times
+for (i in 1:200) {
+  # Sample indices from not_selected
+  indices <- sample(seq_len(ncol(onehot_instance)), length(selected$position))
+  
+  # Create a counter-adversarial example
+  counter <- onehot_instance
+  counter[,indices,] <- onehot_instance[,indices,]*0 + 0.25
+  
+  # Make prediction on the counter-adversarial example
+  pred_counter <- predict(model, counter, verbose = 0)
+  
+  # Store the result for pred_counter[1,1]
+  pred_counter_results[i] <- pred_counter[1,1]
+}
+
+# Calculate the mean of the pred_counter[1,1] values
+mean_pred_counter <- mean(pred_counter_results)
+
+# Print the mean
+print("\nPrediction after substituting same amount of random features with 0.25:")
+mean_pred_counter
+```
