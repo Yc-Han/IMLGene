@@ -13,3 +13,5 @@ pROC
 keras
 magrittr
 reticulate
+patchwork
+ggseqlogo

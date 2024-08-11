@@ -814,3 +814,83 @@ second_six
 2. The capturing of wobbleness seems to be an interesting topic. It is not clear how it can be used in practice, but it is a good indicator of the model's ability to capture the codon structure. If it can be proved to be universally present in correctly trained models, that would be very ideal.
 
 3. How to work with the selected features? Are they biologically significant? Are they useful in distinguishing instances? (for which we need to adjust the model) These are questions that need to be answered in the future.
+
+## Input Reconstruction
+
+We finally tried reconstructing the input sequence using a non-informative baseline, where A,C,G,T each has 0.1 for each position. We attempted 0.25, but the algorithm did not converge.
+
+This is done by iteratively doing:
+
+$$X^{(t+1)} = x^{(t)} + \epsilon \cdot IG(X^{(t)})$$
+
+We set $\epsilon = 2$.
+
+```{r recon}
+# we now use igs to reconstruct instance that can be predicted as 1 at confidence 0.8
+# we do: baseline_(t+1) = baseline_(t) + 0.001 * igs, and go through model
+# if pred[1] > 0.8, break the loop.
+# predict using predict(model, onehot_instance, verbose = 0)
+count <- 0
+epsilon <- 2
+baseline <- onehot_instance * 0 + 0.1
+conf <- numeric()
+# Iteratively update the baseline
+repeat {
+  # Compute Integrated Gradients for the current baseline
+  igt <- ig_modified(
+  input_seq = onehot_instance,
+  baseline_type = "modify",
+  baseline_onehot = baseline,
+  target_class_idx = 1,
+  model = model,
+  num_baseline_repeats = 1)
+  
+  # Update the baseline input
+  baseline <- baseline + epsilon * igt
+  count <- count + 1
+  # Predict using the updated baseline
+  pred <- predict(model, baseline, verbose = 0)
+  conf <- c(conf, pred[1,1])
+  # print(paste0("Iteration", count, ": ", pred[1,1]))
+  # Check the prediction for class "1"
+  if (pred[1,1] > 0.9) {
+    break
+  }
+}
+```
+
+We plot the learning curve and the sequence logo (customed using final IG as y-axis) for a segment of the sequence.
+
+Interpretation: the achieved representation is the least required to be predicted as 16S rRNA gene with a confidence of 90%.
+
+We also plotted the mean of each position with the previously selected important spots marked blue. The value here does not seem to correspond to the identified importance of the position.
+
+```{r reconplot, cache=TRUE}
+# line plot for conf
+ggplot(data = data.frame(iteration = 1:length(conf), conf = conf), aes(x = iteration, y = conf)) +
+  geom_line() +
+  geom_point() +
+  theme_bw() +
+  labs(x = "Iteration", y = "Confidence")
+# Convert the array to a data frame for ggplot
+baseline.arr <- as.array(baseline)
+baseline.arr <- t(baseline.arr[1,,])
+df <- as.data.frame(baseline.arr)
+
+# Add row names for A, C, G, T
+rownames(df) <- c("A", "C", "G", "T")
+df_mat <- as.matrix(df)
+ggseqlogo(df_mat, method='custom', seq_type='dna') + xlim(50,100) + ylim(-1.1,1.1) +
+  labs(x="bp", y="IG")
+
+rowmeans <- rowMeans(as.array(baseline[1,,]))
+df <- data.frame(position = 1:600, value = rowmeans)
+
+ggplot(data = df, aes(x = position, y = value)) +
+  geom_point() +  # Plot points
+  geom_point(data = df[df$position %in% selected$position,], 
+             aes(x = position, y = value), 
+             color = "blue", shape = 2, size = 3) +  # Mark selected points with red crosses
+  theme_bw() +
+  labs(x = "Position", y = "Mean locus sum")
+```
