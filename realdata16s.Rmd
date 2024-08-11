@@ -19,6 +19,8 @@ library(caret)
 library(pROC)
 library(keras)
 library(magrittr)
+library(patchwork)
+library(ggseqlogo)
 set.seed(42)
 library(reticulate)
 use_python("E:/miniconda/envs/r-reticulate/python.exe", required = TRUE)
@@ -756,6 +758,53 @@ consecutive_trip <- strsplit(consecutive_trip, "")
 consecutive_trip <- unlist(consecutive_trip)
 table(consecutive_trip)
 table(consecutive$key)
+```
+
+We have visualized the selected features in a sequence logo plot.
+
+```{r seqlogo, message=FALSE, warning=FALSE}
+replace_with_dash <- function(sequence, positions) {
+  sapply(1:nchar(sequence), function(i) {
+    if (i %in% positions) {
+      substr(sequence, i, i)
+    } else {
+      "-"
+    }
+  }) %>% paste(collapse = "")
+}
+positions <- selected$position
+# Apply the function to each gene sequence
+modified_sequences <- sapply(interest_substrings, replace_with_dash, positions)
+p1 <- ggplot() + geom_logo(modified_sequences) + theme_logo() +
+  xlim(0,45)
+p3 <- ggplot() + geom_logo(modified_sequences) + theme_logo() +
+  xlim(120,150)
+p4 <- ggplot() + geom_logo(modified_sequences) + theme_logo() +
+  xlim(160,190)
+p5 <- ggplot() + geom_logo(modified_sequences) + theme_logo() +
+  xlim(225,240)
+p6 <- ggplot() + geom_logo(modified_sequences) + theme_logo() +
+  xlim(250,280)
+p7 <- ggplot() + geom_logo(modified_sequences) + theme_logo() +
+  xlim(300,350)
+p8 <- ggplot() + geom_logo(modified_sequences) + theme_logo() +
+  xlim(350,400)
+p9 <- ggplot() + geom_logo(modified_sequences) + theme_logo() +
+  xlim(400,425)
+p10 <- ggplot() + geom_logo(modified_sequences) + theme_logo() +
+  xlim(450,465)
+p11 <- ggplot() + geom_logo(modified_sequences) + theme_logo() +
+  xlim(535,545)
+p12 <- ggplot() + geom_logo(modified_sequences) + theme_logo() +
+  xlim(560,590)
+
+first_six <- (p1 | p3) / (p4 | p5) / (p7 | p6)
+# Second group of 6 plots (3x2)
+second_six <- (p8 | p9) / (p10 | p11) / p12
+
+# Display the two graphs
+first_six
+second_six
 ```
 
 ## Discussion
