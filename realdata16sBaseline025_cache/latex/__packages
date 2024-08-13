@@ -1,0 +1,17 @@
+deepG
+ggplot2
+tibble
+stringr
+dplyr
+data.table
+rlang
+microseq
+seqinr
+lattice
+caret
+pROC
+keras
+magrittr
+patchwork
+ggseqlogo
+reticulate

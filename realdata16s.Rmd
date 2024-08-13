@@ -193,6 +193,10 @@ eval_model
 ```
 It still has a very high accuracy. We evaluate it again using modified IG.
 
+Instance: GCF_001986655.1_ASM198665v1_genomic.16s.fasta 499-1098 bp.
+
+Baseline: GCF_002895085.1_ASM289508v1_genomic.fasta 499-1098 bp.
+
 ```{r ignew}
 instance <- microseq::readFasta('16s/validation/GCF_001986655.1_ASM198665v1_genomic.16s.fasta.fasta')$Sequence[1]
 instance_sub <- substr(instance, 499, 1098)
@@ -202,6 +206,7 @@ onehot_instance <-  seq_encoding_label(char_sequence = instance_sub,
                                           vocabulary = c("A", "C", "G", "T"))
 baseline <- microseq::readFasta('bacteria/validation/GCF_002895085.1_ASM289508v1_genomic.fasta')$Sequence[1]
 baseline_sub <- substr(baseline, 499, 1098)
+# onehot_baseline <- onehot_instance * 0 + 0.25
 onehot_baseline <- seq_encoding_label(char_sequence = baseline_sub,
                                           maxlen = 600,
                                           start_ind = 1,
@@ -221,13 +226,21 @@ sum <- rowSums(as.array(igs))
 abs_sum <- rowSums(abs(as.array(igs)))
 df <- data.frame(abs_sum = abs_sum, sum=sum, position = 1 : 600)
 
-ggplot(df, aes(x = position, y = abs_sum)) + geom_point() + geom_smooth() + theme_bw()
+ggplot(df, aes(x = position, y = abs_sum)) + geom_point() + geom_smooth(method = "gam") + theme_bw()
 ggplot(df, aes(x = position, y = sum)) + geom_point() + theme_bw()
 ```
 
 This time, the importance is scattered across positions in a more complex way, which reflects the nature of genetic data.
 
 We also visualize the direct sum, since some points persistently have negative gradients. The implication of these is still unknown.
+
+We may notice a peak at the second half of the absolute sum curve. We speculate this is due to the loess method applied, and the effect is more random than artifact. The totally unpatterned sum plot justifies this.
+
+This can also be the effect of a LSTM model. Can be further studied.
+
+If the peak is not random and the loess is correct, moving the targeted sequence should also change the peak. As a mere check we move our instance 250 bp to the right, that is 748 to 1348 bp. The smooth curve looks the same as now, for simplicity we do not show it again.
+
+The same information compression technique is shown below.
 
 ```{r igmod}
 df_mod <- df %>%
@@ -265,33 +278,7 @@ ggplot(df_mod, aes(x = group)) +
   labs(y = "Sum of IG", color = "Statistic", x = "AA Index")
 ```
 
-Before and after information compression, there are some obvious clustering on the graph. How important / interesting they are is unknown to us, but we extract them here for possible use.
-
 ```{r cluster}
-df_sorted <- df_mod %>% arrange(group)
-df_sorted <- df_sorted %>%
-  mutate(diff_y = abs(sum_mean - lag(sum_mean, default = first(sum_mean))))
-threshold <- 0.0001
-df_sorted <- df_sorted %>%
-  mutate(cluster = cumsum(diff_y >= threshold))  # Increment cluster ID when difference exceeds threshold
-
-# Step 5: Filter clusters with more than one point (true clusters)
-df_clusters <- df_sorted %>%
-  group_by(cluster) %>%
-  filter(n() > 1) %>%  # Keep only clusters with more than one point
-  ungroup()
-
-# plot
-ggplot(df_clusters, aes(x = group)) +
-  # draw points of max
-  geom_point(aes(x = group, y = sum_mean), color = "blue") +
-  geom_smooth(aes(y = sum_mean, color = "Mean"), method = "auto", se = FALSE) +
-  scale_color_manual(values = c("Mean" = "blue", "Abs Mean" = "orange")) +
-  theme_bw() +
-  labs(y = "Sum of IG", color = "Statistic", x = "AA Index") +
-  # set x range to 1:600
-  xlim(1, 200)
-
 char <- strsplit(instance_sub, "")[[1]]
 trip_instance <- sapply(seq(1, length(char), by = 3), function(i) {
   paste(char[i:min(i+2, length(char))], collapse = "")
@@ -303,16 +290,7 @@ df_key <- data.frame(
   group = 1:200
 )
 # left join df_key to df_clusters by group
-df_clusters <- left_join(df_clusters, df_key, by = "group")
 df_keyed <- left_join(df_mod, df_key, by = "group")
-seq_cluster <- df_clusters %>%
-  group_by(cluster) %>%
-  summarise(
-    score = sum(sum_mean),
-    seq = paste(trip, collapse = ""),
-    aa = paste(key, collapse = "")
-  )
-kableExtra::kable(seq_cluster, format = "latex", booktabs = TRUE, caption = "Possible clustering of Importance score")
 ```
 
 ```{r bykey}
@@ -337,7 +315,7 @@ hm1 <- ggplot(df_keyed, aes(x = cod1, y = cod23, fill = value)) +
 # hm1
 ```
 
-We further studied wobleness. In this case, more randomness is introduced by the fact that we only calculated IG once. In RSDexport, the average importance almost consistently follow the 2-1-3 structure. Here, we tested some other instances and baselines and wobleness is not always detected.
+We further studied wobleness (see Durrant & Bhatt). In this case, more randomness is introduced by the fact that we only calculated IG once. In RSDexport, the average importance almost consistently follow the 2-1-3 structure. Here, we tested some other instances and baselines and wobleness is not always detected.
 
 Here is an example of existing wobbleness.
 
@@ -537,28 +515,9 @@ hm3
 
 ## Feature Selection
 
-We first visualize the average absolute feature importance by position based on our instance.
-
-Points above the 90%-quantile are annotated with their corresponding amino acid.
-
-```{r imp}
-quantile_90 <- quantile(df_keyed$abs_sum_mean, 0.90)
-df_keyed_above_90 <- df_keyed %>% filter(abs_sum_mean > quantile_90)
-ggplot(df_keyed, aes(x = group, y = abs_sum_mean)) +
-  geom_line() +
-  geom_hline(yintercept = quantile_90, linetype = "dashed", lwd=1, color = "blue") +
-  geom_point() +
-  geom_text(data = df_keyed_above_90, 
-            aes(label = key), 
-            vjust = -0.0005, hjust = 0, 
-            color = "red") +
-  theme_bw() +
-  labs(x = "AA Index", y = "Mean Locus Abs Sum")
-```
-
 We then implemented the feature selection algorithm as by the enhanced IG paper. We do this based on locus level, and sample 50 events for both interest and random group.
 
-We performed t-test row-wise. Since each row was tested only once, no multiple testing is present.
+We performed one-sided t-test row-wise (only select positions with absolute sum of gradients larger than the random group). Since each row was tested only once, no multiple testing is present.
 
 In the end, 43 out of 600 loci are identified as having significantly higher absolute sum of gradients than the random group.
 
@@ -743,9 +702,11 @@ selected_ana <- left_join(selected, df_keyed, by = c("AApos" = "group")) %>%
 selected_trip <- selected_ana$trip
 selected_trip <- strsplit(selected_trip, "")
 selected_trip <- unlist(selected_trip)
+print("ACGT content of selected features:")
 table(selected_trip)
 
 selected_key <- selected_ana$key
+print("Table of corresponding amino acids of selected features:")
 table(selected_key)
 
 # extract consecutive pairs: that is if AApos is only +1 compared to the former row
@@ -756,11 +717,13 @@ consecutive
 consecutive_trip <- consecutive$trip
 consecutive_trip <- strsplit(consecutive_trip, "")
 consecutive_trip <- unlist(consecutive_trip)
+print("ACGT content of selected, consecutive features:")
 table(consecutive_trip)
+print("Table of corresponding amino acids of selected, consecutive features:")
 table(consecutive$key)
 ```
 
-We have visualized the selected features in a sequence logo plot.
+We have visualized the selected features in **a sequence logo plot**. Keep in mind that here, G and A are present with relatively high confidence.
 
 ```{r seqlogo, message=FALSE, warning=FALSE}
 replace_with_dash <- function(sequence, positions) {
@@ -807,21 +770,130 @@ first_six
 second_six
 ```
 
-## Discussion
+## Adversarial
 
-1. Due to lack of clear patterns in most real-world cases, it seems IG alone, even if correctly calculated, can be very much not informative. Instead of keep improving its theory minimally, it seems more reasonable to come up with methods tailored to genomics that can best utilize those data and provide interpretable or meaningful results. For example, the PCSC score could be a good measurement in explaining the reliability of the model in capturing synonymous codons.
+We also tried adversarial instances. We replace the selected spots of the instance all with C, and the confidence for 16S rRNA drops from **0.906 to 0.176**! Also replacing them with T reduces the confidence to 0.20. Replacing with A and G is not effective.
 
-2. The capturing of wobbleness seems to be an interesting topic. It is not clear how it can be used in practice, but it is a good indicator of the model's ability to capture the codon structure. If it can be proved to be universally present in correctly trained models, that would be very ideal.
+We compare them with an exact same number of randomly selected positions and substitute them accordingly too.
 
-3. How to work with the selected features? Are they biologically significant? Are they useful in distinguishing instances? (for which we need to adjust the model) These are questions that need to be answered in the future.
+We also tried replacing them with 0.25, and the confidence drops only to 0.7. There is also only 0.04 difference of confidence between the selected features and randomly sampled features. 
+
+```{r adversarial, cache=TRUE}
+adversarial <- onehot_instance
+pred_vor <- predict(model, adversarial, verbose = 0)
+print("Original Prediction: ")
+pred_vor
+adversarial[,selected$position,] <- onehot_instance[,selected$position,]*0
+adversarial[,selected$position, 2] <- 1
+pred_adv <- predict(model, adversarial, verbose = 0)
+print("Prediction after substituting important features with C: ")
+pred_adv
+
+### counter-adversarial: replace not selected$position:
+counter <- onehot_instance
+pred_counter_results <- numeric(200)
+# Loop 100 times
+for (i in 1:200) {
+  # Sample indices from not_selected
+  indices <- sample(seq_len(ncol(onehot_instance)), length(selected$position))
+  
+  # Create a counter-adversarial example
+  counter <- onehot_instance
+  counter[,indices,] <- onehot_instance[,indices,]*0
+  counter[,indices, 2] <- 1
+  
+  # Make prediction on the counter-adversarial example
+  pred_counter <- predict(model, counter, verbose = 0)
+  
+  # Store the result for pred_counter[1,1]
+  pred_counter_results[i] <- pred_counter[1,1]
+}
+
+# Calculate the mean of the pred_counter[1,1] values
+mean_pred_counter <- mean(pred_counter_results)
+
+# Print the mean
+print("Prediction after substituting same amount of random features with C: ")
+mean_pred_counter
+
+### replacing with A
+adversarial <- onehot_instance
+adversarial[,selected$position,] <- onehot_instance[,selected$position,]*0
+adversarial[,selected$position, 1] <- 1
+pred_adv <- predict(model, adversarial, verbose = 0)
+print("Prediction after substituting important features with A: ")
+pred_adv
+
+### counter-adversarial: replace not selected$position:
+counter <- onehot_instance
+pred_counter_results <- numeric(200)
+# Loop 100 times
+for (i in 1:200) {
+  # Sample indices from not_selected
+  indices <- sample(seq_len(ncol(onehot_instance)), length(selected$position))
+  
+  # Create a counter-adversarial example
+  counter <- onehot_instance
+  counter[,indices,] <- onehot_instance[,indices,]*0
+  counter[,indices, 1] <- 1
+  
+  # Make prediction on the counter-adversarial example
+  pred_counter <- predict(model, counter, verbose = 0)
+  
+  # Store the result for pred_counter[1,1]
+  pred_counter_results[i] <- pred_counter[1,1]
+}
+
+# Calculate the mean of the pred_counter[1,1] values
+mean_pred_counter <- mean(pred_counter_results)
+
+# Print the mean
+print("Prediction after substituting same amount of random features with A: ")
+mean_pred_counter
+
+### replacing with 0.25
+
+adversarial[,selected$position,] <- onehot_instance[,selected$position,]*0 + 0.25
+pred_adv <- predict(model, adversarial, verbose = 0)
+print("Prediction after substituting important features with 0.25:")
+pred_adv
+
+### counter-adversarial: replace not selected$position:
+counter <- onehot_instance
+pred_counter_results <- numeric(200)
+# Loop 100 times
+for (i in 1:200) {
+  # Sample indices from not_selected
+  indices <- sample(seq_len(ncol(onehot_instance)), length(selected$position))
+  
+  # Create a counter-adversarial example
+  counter <- onehot_instance
+  counter[,indices,] <- onehot_instance[,indices,]*0 + 0.25
+  
+  # Make prediction on the counter-adversarial example
+  pred_counter <- predict(model, counter, verbose = 0)
+  
+  # Store the result for pred_counter[1,1]
+  pred_counter_results[i] <- pred_counter[1,1]
+}
+
+# Calculate the mean of the pred_counter[1,1] values
+mean_pred_counter <- mean(pred_counter_results)
+
+# Print the mean
+print("Prediction after substituting same amount of random features with 0.25:")
+mean_pred_counter
+```
+
+We would like to study the drastic drop of prediction confidence when more C and T are introduced.
 
 ## Input Reconstruction
 
-We finally tried reconstructing the input sequence using a non-informative baseline, where A,C,G,T each has 0.1 for each position. We attempted 0.25, but the algorithm did not converge.
+We tried reconstructing the input sequence using a non-informative baseline, where A,C,G,T each has 0.1 for each position. We attempted 0.25, but the algorithm did not converge. Also choosing a bacteria sub-sequence leads to a non-converging result. This seems to be interesting.
 
 This is done by iteratively doing:
 
-$$X^{(t+1)} = x^{(t)} + \epsilon \cdot IG(X^{(t)})$$
+$$X^{(t+1)} = X^{(t)} + \epsilon \cdot IG(X^{(t)})$$
 
 We set $\epsilon = 2$.
 
@@ -895,74 +967,63 @@ ggplot(data = df, aes(x = position, y = value)) +
   labs(x = "Position", y = "Mean locus sum")
 ```
 
-We also tried adversarial instance. We replace the selected spots of the instance all with C, and the confidence for 16S rRNA drops from **0.906 to 0.176**! Also replacing them with T reduces the confidence to 0.20. Replacing with A and G is not effective.
+Pay extra attention to the reconstructed sequence logo plot. In the negative region, C and T often have considerably negative weights, meaning they should not appear on this position if the prediction is 16S. This could explain why the adversarial scenario where more Cs are included caused dramatic drop in confidence.
 
-```{r adversarial, cache=TRUE}
-adversarial <- onehot_instance
-pred_vor <- predict(model, adversarial, verbose = 0)
-print("Original Prediction: ")
-pred_vor
-adversarial[,selected$position,] <- onehot_instance[,selected$position,]*0
-adversarial[,selected$position, 2] <- 1
-pred_adv <- predict(model, adversarial, verbose = 0)
-print("\nPrediction after substituting important features with C: ")
-pred_adv
+We also table the matching positions of the reconstructed sequence comparing the original one. Compared to selected features, we see the matching positions seem not to be totally away from the selected ones. Could this be of interest?
 
-### counter-adversarial: replace not selected$position:
-counter <- onehot_instance
-pred_counter_results <- numeric(200)
-# Loop 100 times
-for (i in 1:200) {
-  # Sample indices from not_selected
-  indices <- sample(seq_len(ncol(onehot_instance)), length(selected$position))
+```{r reconeval}
+# make the max of each baseline[,i,] 1 and the rest 0
+onehot_baseline <- as.array(baseline)
+for (j in 1:dim(onehot_baseline)[2]) {
+  # Find the index of the maximum value in the 4 values
+  max_index <- which.max(onehot_baseline[1, j, ])
   
-  # Create a counter-adversarial example
-  counter <- onehot_instance
-  counter[,indices,] <- onehot_instance[,indices,]*0
-  counter[,indices, 2] <- 1
+  # Set the maximum value position to 1 and others to 0
+  onehot_baseline[1, j, ] <- 0
+  onehot_baseline[1, j, max_index] <- 1
+}
+sequence <- character(600)
+
+# Define the mapping from index to nucleotide
+nucleotide_map <- c("A", "C", "G", "T")
+
+# Loop over the 477 positions
+for (i in 1:600) {
+  # Find the index where the value is 1
+  nucleotide_index <- which(onehot_baseline[1, i, ] == 1)
   
-  # Make prediction on the counter-adversarial example
-  pred_counter <- predict(model, counter, verbose = 0)
-  
-  # Store the result for pred_counter[1,1]
-  pred_counter_results[i] <- pred_counter[1,1]
+  # Map the index to the corresponding nucleotide
+  sequence[i] <- nucleotide_map[nucleotide_index]
 }
 
-# Calculate the mean of the pred_counter[1,1] values
-mean_pred_counter <- mean(pred_counter_results)
-
-# Print the mean
-print("\nPrediction after substituting same amount of random features with C: ")
-mean_pred_counter
-
-adversarial[,selected$position,] <- onehot_instance[,selected$position,]*0 + 0.25
-pred_adv <- predict(model, adversarial, verbose = 0)
-print("\nPrediction after substituting important features with 0.25:")
-pred_adv
-
-### counter-adversarial: replace not selected$position:
-counter <- onehot_instance
-pred_counter_results <- numeric(200)
-# Loop 100 times
-for (i in 1:200) {
-  # Sample indices from not_selected
-  indices <- sample(seq_len(ncol(onehot_instance)), length(selected$position))
-  
-  # Create a counter-adversarial example
-  counter <- onehot_instance
-  counter[,indices,] <- onehot_instance[,indices,]*0 + 0.25
-  
-  # Make prediction on the counter-adversarial example
-  pred_counter <- predict(model, counter, verbose = 0)
-  
-  # Store the result for pred_counter[1,1]
-  pred_counter_results[i] <- pred_counter[1,1]
-}
-
-# Calculate the mean of the pred_counter[1,1] values
-mean_pred_counter <- mean(pred_counter_results)
-
-# Print the mean
-print("\nPrediction after substituting same amount of random features with 0.25:")
-mean_pred_counter
+# Collapse the character vector into a single string
+sequence_string <- paste(sequence, collapse = "")
 ```
+
+```{r reconkey}
+recon_split <- strsplit(sequence_string, "")[[1]]
+recon_trip <- tokenize_triplets(recon_split)
+recon_keyed <- triplets_keying(recon_trip)
+ins_split <- strsplit(instance_sub, "")[[1]]
+ins_trip <- tokenize_triplets(ins_split)
+ins_keyed <- triplets_keying(ins_trip)
+
+# positions where name of recon_keyed == ins_keyed
+matched <- which(recon_keyed == ins_keyed)
+print("Matched Reconstructed sequence and original sequence, AA position: ")
+matched
+print("Selected features, AA position: ")
+ceiling(selected$position / 3)
+```
+
+## Discussion
+
+Main Point: **IML in Genomics: What comes after non-informative local interpretations? The Interpretation of Interpretations**
+
+1. Due to lack of clear patterns in most real-world cases, it seems IG alone, even if correctly calculated, can be very much not informative. Instead of keep improving its theory minimally, it seems more reasonable to come up with methods tailored to genomics that can best utilize those data and provide interpretable or meaningful results. For example, the PCSC score could be a good measurement in explaining the reliability of the model in capturing synonymous codons.
+
+2. How to work with the selected features? Are they biologically significant? Are they useful in distinguishing instances? (for which we need to adjust the model) These are questions that need to be answered in the future.
+
+3. I personally find the convergence of feature reconstruction fascinating. For some reasonable targets, e.g. a bacterial sequence, it is not possible to transform it to a possible 16S simply using IG outputs.
+
+4. The choice of baseline can be further studied. Choosing a real sequence from the other category can include too much artifact than truth.

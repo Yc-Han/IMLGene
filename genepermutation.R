@@ -120,4 +120,56 @@ GenePermutation <- function(sequence, num.perm,
   return(permuted)
 }
 
+### Function for inserting a motif
+insert_motif <- function(sequence, motif) {
+  seq_length <- nchar(sequence)
+  motif_length <- nchar(motif)
+  
+  start_pos <- sample(1:(seq_length - motif_length + 1), 1)
+  
+  pre_motif <- substr(sequence, 1, start_pos - 1)
+  post_motif <- substr(sequence, start_pos + motif_length, seq_length)
+  
+  new_sequence <- paste0(pre_motif, motif, post_motif)
+  return(new_sequence)
+}
 
+# function that takes "repeats" as argument, replicates input for repeats times
+# and performs ok-mutate on each replicate, and then inserts the motif
+GeneMotif <- function(sequence, motif, repeats, min.subs, max.subs) {
+  result <- data.frame(
+    seq = character(),
+    label = character()
+  )
+  for (i in 1:repeats) {
+    motif_seq <- sequence
+    motif_split <- strsplit(sequence, "")[[1]]
+    label <- sample(c("motif", "normal"), 1)
+    motif_trip <- tokenize_triplets(motif_split)
+    motif_seq <- permute_sequence(motif_trip, type="ok", min.subs=min.subs,
+                                  max.subs=max.subs, dict=codon.dict, spec.cond=FALSE,
+                                  spec.region=NULL)
+    motif_seq <- paste(motif_seq, collapse = "")
+    if (label == "motif") {
+      motif_seq <- insert_motif(motif_seq, motif)
+    }
+    result <- rbind(result, data.frame(seq = I(list(motif_seq)), label))
+  }
+  return(result)
+}
+
+# finding the motif:
+find_motif <- function(sequence, motif) {
+  seq_length <- nchar(sequence)
+  motif_length <- nchar(motif)
+  
+  positions <- c()
+  
+  for (i in 1:(seq_length - motif_length + 1)) {
+    sub_seq <- substr(sequence, i, i + motif_length - 1)
+    if (sub_seq == motif) {
+      positions <- c(positions, i)
+    }
+  }
+  return(positions)
+}

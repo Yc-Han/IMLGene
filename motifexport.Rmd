@@ -1,0 +1,128 @@
+---
+title: "Motif Export"
+author: "Yichen Han"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r pkgs, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+library(deepG)
+library(ggplot2)
+library(microseq)
+library(seqinr)
+library(dplyr)
+library(caret)
+library(pROC)
+library(keras)
+library(magrittr)
+library(patchwork)
+library(ggseqlogo)
+set.seed(42)
+library(reticulate)
+use_python("E:/miniconda/envs/r-reticulate/python.exe", required = TRUE)
+source("genepermutation.R")
+source("ig_modified.R")
+```
+
+# Motif detection
+
+```{r raw data}
+rsd <- seqinr::read.fasta("rsd.FASTA", seqtype = "DNA")
+rsd <- toupper(unlist(seqinr::getSequence(rsd)))
+motif <- "GAGAGGGCGG"
+```
+
+Based on *rsd* (477 bp), first random ok-mutations, and then insert a length 10 motif `GAGAGGGCGG` at a random starting point. Data 1000.
+
+```{r hist}
+# load outputs/hist39.rds
+histmotif <- readRDS(file="outputs/histMotif.rds")
+plot(histmotif)
+```
+
+```{r load model}
+checkpoint_path <- file.path("checkpoints")
+dir_path <- file.path("outputs")
+run_name <- "rsd-motif_2"
+model <- load_cp(paste0(checkpoint_path, "/", run_name), 
+                 cp_filter = "last_ep")
+```
+
+## Model Evaluation
+
+```{r evaluate2}
+path_normal_test <- file.path("motif/normal/test")
+path_motif_test <- file.path("motif/motif/test")
+eval_model <- evaluate_model(path_input = c(path_normal_test,
+  path_motif_test),
+  model = model,
+  batch_size = 128,
+  step = 1,
+  vocabulary_label = list(c("normal", "motif")),
+  number_batches = 10,
+  mode = "label_folder",
+  verbose = FALSE
+)
+eval_model
+```
+
+## IG
+
+**Nonsense explanations!**
+
+First baseline: real baseline
+
+Second baseline: 0.25
+
+```{r ig}
+instance <- microseq::readFasta('motif/motif/test/36.fasta')$Sequence[1]
+onehot_instance <-  seq_encoding_label(char_sequence = instance,
+                                          maxlen = 477,
+                                          start_ind = 1,
+                                          vocabulary = c("A", "C", "G", "T"))
+motif_pos <- find_motif(instance, motif)
+motif_end <- motif_pos + nchar(motif)
+
+baseline <- microseq::readFasta('motif/normal/test/29.fasta')$Sequence[1]
+onehot_baseline_25 <- onehot_instance * 0 + 0.25
+onehot_baseline <- seq_encoding_label(char_sequence = baseline,
+                                          maxlen = 477,
+                                          start_ind = 1,
+                                          vocabulary = c("A", "C", "G", "T"))
+pred <- predict(model, onehot_instance, verbose = 0)
+pred
+igs <- ig_modified(
+  input_seq = onehot_instance,
+  baseline_type = "modify",
+  baseline_onehot = onehot_baseline,
+  target_class_idx = 1,
+  model = model,
+  num_baseline_repeats = 1)
+heatmaps_integrated_grad(integrated_grads = igs,
+                         input_seq = onehot_instance)
+sum <- rowSums(as.array(igs))
+abs_sum <- rowSums(abs(as.array(igs)))
+dfs <- data.frame(abs_sum = abs_sum, sum=sum, position = 1 : 477)
+
+ggplot(dfs, aes(x = position, y = abs_sum))+ geom_rect(aes(xmin = motif_pos, xmax = motif_end, ymin = -Inf, ymax = Inf), fill = "lightblue", alpha = 0.2) + geom_point() + theme_bw() + labs(subtitle = "Baseline real")
+
+ig25 <- ig_modified(
+  input_seq = onehot_instance,
+  baseline_type = "modify",
+  baseline_onehot = onehot_baseline_25,
+  target_class_idx = 1,
+  model = model,
+  num_baseline_repeats = 1)
+heatmaps_integrated_grad(integrated_grads = ig25,
+                         input_seq = onehot_instance)
+sum <- rowSums(as.array(ig25))
+abs_sum <- rowSums(abs(as.array(ig25)))
+df25 <- data.frame(abs_sum = abs_sum, sum=sum, position = 1 : 477)
+
+ggplot(df25, aes(x = position, y = abs_sum))+ geom_rect(aes(xmin = motif_pos, xmax = motif_end, ymin = -Inf, ymax = Inf), fill = "lightblue", alpha = 0.2) + geom_point() + theme_bw() + labs(subtitle = "Baseline 0.25")
+```

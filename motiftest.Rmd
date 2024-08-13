@@ -1,0 +1,206 @@
+---
+title: "Motif Detection"
+author: "Yichen Han"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r pkgs, echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+library(deepG)
+library(ggplot2)
+library(microseq)
+library(seqinr)
+library(dplyr)
+library(caret)
+library(pROC)
+library(keras)
+library(magrittr)
+library(patchwork)
+library(ggseqlogo)
+set.seed(42)
+library(reticulate)
+use_python("E:/miniconda/envs/r-reticulate/python.exe", required = TRUE)
+source("genepermutation.R")
+source("ig_modified.R")
+```
+
+```{r raw data}
+rsd <- seqinr::read.fasta("rsd.FASTA", seqtype = "DNA")
+rsd <- toupper(unlist(seqinr::getSequence(rsd)))
+motif <- "GAGAGGGCGG"
+```
+
+```{r genemotif}
+# if synthetic data at exp39.csv exists, read it in as test, skip this
+if (!file.exists("synthetic motif.csv")) {
+  rsd_pasted <- paste0(rsd, collapse = "")
+  test <- GeneMotif(rsd_pasted, motif, 1000, 60, 90)
+  test <- test %>%
+    mutate(seq = sapply(seq, paste, collapse = ""))
+  # save test as csv
+  write.csv(test, "synthetic motif.csv")
+} else {
+  test <- read.csv("synthetic motif.csv")
+}
+  table(test$label)
+```
+
+```{r split}
+# perform random train-validation-test split:
+# Create indices for the training set (let's say 60% of the data)
+training_indices <- createDataPartition(test$label, p = 0.6, list = FALSE)
+
+# Create the training set
+training_set <- test[training_indices, ]
+
+# Split the remaining 40% into validation and test sets (50% each of the remaining)
+remaining_indices <- setdiff(row.names(test), row.names(training_set))
+remaining_set <- test[remaining_indices, ]
+validation_indices <- createDataPartition(remaining_set$label, p = 0.5, list = FALSE)
+
+# Create validation and test sets
+validation_set <- remaining_set[validation_indices, ]
+test_set <- remaining_set[-validation_indices, ]
+```
+
+```{r save into folders}
+# create folders: normal, abnormal, special
+## within each of them create train, validation, test folders
+dir.create("motif")
+dir.create("motif/normal")
+dir.create("motif/motif")
+dir.create("motif/normal/train")
+dir.create("motif/normal/validation")
+dir.create("motif/normal/test")
+dir.create("motif/motif/train")
+dir.create("motif/motif/validation")
+dir.create("motif/motif/test")
+# write each row into a FASTA file in corresponding folder, according to label
+write_fasta <- function(data_set, set_name) {
+  for (i in 1:nrow(data_set)) {
+    # Define file path based on label and dataset type
+    file_path <- paste0("motif/", data_set$label[i], "/", set_name, "/", i, ".fasta")
+    
+    # Create a data frame expected by microseq::writeFasta
+    fasta_data <- data_set$seq[i]
+    
+    # Write FASTA file
+    seqinr::write.fasta(fasta_data, file.out = file_path, names = i)
+  }
+}
+
+# Apply the function to each dataset
+write_fasta(training_set, "train")
+write_fasta(validation_set, "validation")
+write_fasta(test_set, "test")
+```
+
+```{r model}
+model <- create_model_lstm_cnn(
+  maxlen = 477,
+  layer_lstm = NULL,
+  layer_dense = c(2L),
+  vocabulary_size = 4,
+  kernel_size = c(12, 12, 12),
+  filters = c(32, 64, 128),
+  pool_size = c(3, 3, 3),
+  learning_rate = 0.01
+)
+path_checkpoint <- file.path("checkpoints")
+dir_path <- file.path("outputs")
+unlink(paste0(path_checkpoint, "/motiftest/*"))
+unlink(paste0(path_checkpoint, "/lm_motif_target_middle_lstm/*"))
+if (!dir.exists(path_checkpoint)) dir.create(path_checkpoint)
+if (!dir.exists(dir_path)) dir.create(dir_path)
+```
+
+```{r training}
+path_normal_train <- file.path("motif/normal/train")
+path_normal_validation <- file.path("motif/normal/validation")
+path_motif_train <- file.path("motif/motif/train")
+path_motif_validation <- file.path("motif/motif/validation")
+
+hist <- train_model(train_type = "label_folder",
+  model = model,
+  path = c(path_normal_train, path_motif_train),
+  path_val = c(path_normal_validation, path_motif_validation),
+  vocabulary_label = c("normal", "motif"),
+  path_checkpoint = path_checkpoint,
+  train_val_ratio = 0.2,
+  run_name = "rsd-motif",
+  batch_size = 128,
+  steps_per_epoch = 30,
+  epochs = 10,
+  step = c(1,1))
+plot(hist)
+# save hist
+saveRDS(hist, file = "outputs/histMotif.rds")
+```
+
+```{r eval}
+path_normal_test <- file.path("motif/normal/test")
+path_motif_test <- file.path("motif/motif/test")
+eval_model <- evaluate_model(path_input = c(path_normal_test,
+  path_motif_test),
+  model = model,
+  batch_size = 128,
+  step = 1,
+  vocabulary_label = list(c("normal", "motif")),
+  number_batches = 10,
+  mode = "label_folder",
+  verbose = FALSE
+)
+eval_model
+```
+
+```{r ig}
+instance <- microseq::readFasta('motif/motif/test/36.fasta')$Sequence[1]
+onehot_instance <-  seq_encoding_label(char_sequence = instance,
+                                          maxlen = 477,
+                                          start_ind = 1,
+                                          vocabulary = c("A", "C", "G", "T"))
+motif_pos <- find_motif(instance, motif)
+motif_end <- motif_pos + nchar(motif)
+
+baseline <- microseq::readFasta('motif/normal/test/29.fasta')$Sequence[1]
+onehot_baseline_25 <- onehot_instance * 0 + 0.25
+onehot_baseline <- seq_encoding_label(char_sequence = baseline,
+                                          maxlen = 477,
+                                          start_ind = 1,
+                                          vocabulary = c("A", "C", "G", "T"))
+pred <- predict(model, onehot_instance, verbose = 0)
+pred
+igs <- ig_modified(
+  input_seq = onehot_instance,
+  baseline_type = "modify",
+  baseline_onehot = onehot_baseline,
+  target_class_idx = 1,
+  model = model,
+  num_baseline_repeats = 1)
+heatmaps_integrated_grad(integrated_grads = igs,
+                         input_seq = onehot_instance)
+sum <- rowSums(as.array(igs))
+abs_sum <- rowSums(abs(as.array(igs)))
+dfs <- data.frame(abs_sum = abs_sum, sum=sum, position = 1 : 477)
+
+ggplot(dfs, aes(x = position, y = abs_sum))+ geom_rect(aes(xmin = motif_pos, xmax = motif_end, ymin = -Inf, ymax = Inf), fill = "lightblue", alpha = 0.2) + geom_point() + theme_bw() + labs(subtitle = "Baseline real")
+
+ig25 <- ig_modified(
+  input_seq = onehot_instance,
+  baseline_type = "modify",
+  baseline_onehot = onehot_baseline_25,
+  target_class_idx = 1,
+  model = model,
+  num_baseline_repeats = 1)
+heatmaps_integrated_grad(integrated_grads = ig25,
+                         input_seq = onehot_instance)
+sum <- rowSums(as.array(ig25))
+abs_sum <- rowSums(abs(as.array(ig25)))
+df25 <- data.frame(abs_sum = abs_sum, sum=sum, position = 1 : 477)
+
+ggplot(df25, aes(x = position, y = abs_sum))+ geom_rect(aes(xmin = motif_pos, xmax = motif_end, ymin = -Inf, ymax = Inf), fill = "lightblue", alpha = 0.2) + geom_point() + theme_bw() + labs(subtitle = "Baseline 0.25")
+```
