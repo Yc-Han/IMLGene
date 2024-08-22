@@ -124,12 +124,13 @@ GenePermutation <- function(sequence, num.perm,
 insert_motif <- function(sequence, motif) {
   seq_length <- nchar(sequence)
   motif_length <- nchar(motif)
-  
-  start_pos <- sample(1:(seq_length - motif_length + 1), 1)
-  
+  if (motif_length %% 3 != 0) {
+    stop("Motif length must be a multiple of 3 to fit into codons.")
+  }
+  possible_start_positions <- seq(1, seq_length - motif_length + 1, by = 3)
+  start_pos <- sample(possible_start_positions, 1)
   pre_motif <- substr(sequence, 1, start_pos - 1)
   post_motif <- substr(sequence, start_pos + motif_length, seq_length)
-  
   new_sequence <- paste0(pre_motif, motif, post_motif)
   return(new_sequence)
 }

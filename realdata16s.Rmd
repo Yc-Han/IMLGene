@@ -234,12 +234,6 @@ This time, the importance is scattered across positions in a more complex way, w
 
 We also visualize the direct sum, since some points persistently have negative gradients. The implication of these is still unknown.
 
-We may notice a peak at the second half of the absolute sum curve. We speculate this is due to the loess method applied, and the effect is more random than artifact. The totally unpatterned sum plot justifies this.
-
-This can also be the effect of a LSTM model. Can be further studied.
-
-If the peak is not random and the loess is correct, moving the targeted sequence should also change the peak. As a mere check we move our instance 250 bp to the right, that is 748 to 1348 bp. The smooth curve looks the same as now, for simplicity we do not show it again.
-
 The same information compression technique is shown below.
 
 ```{r igmod}
@@ -352,7 +346,7 @@ summary(lm_model)
 
 ## Consistency
 
-We then calculated PCSC score on our data. With an average score at 0.9, we conclude that the model was able to capture synonymous codons and treats them consistently.
+We then calculated PCSC score on our data. With an average score at 0.8, we conclude that the model was able to capture synonymous codons and treats them rather consistently.
 
 ```{r PCSIV1, cache=TRUE}
 # ok-mutate based on instance, 100 times, saved to pcss_df
@@ -485,7 +479,7 @@ hm1
 hm2 <- ggplot(pcss_final, aes(x = cod1, y = cod23, fill = value)) +
   geom_tile() +
   geom_text(aes(label = key), color = "black", size = 3) +
-  scale_fill_gradient2(low = "blue", mid = "lightgrey", high = "red", midpoint = 0.8) + 
+  scale_fill_gradient2(low = "blue", mid = "lightgrey", high = "red", midpoint = 0.7) + 
   theme_bw() +
   labs(fill = "Average PCSC",
        x = "First Codon Position",
@@ -517,9 +511,9 @@ hm3
 
 We then implemented the feature selection algorithm as by the enhanced IG paper. We do this based on locus level, and sample 50 events for both interest and random group.
 
-We performed one-sided t-test row-wise (only select positions with absolute sum of gradients larger than the random group). Since each row was tested only once, no multiple testing is present.
+We performed one-sided t-test row-wise (only select positions with absolute sum of gradients larger than the random group). We applied Bonferroni Correction. (/600)
 
-In the end, 43 out of 600 loci are identified as having significantly higher absolute sum of gradients than the random group.
+In the end, 33 out of 600 loci are identified as having significantly higher absolute sum of gradients than the random group.
 
 We visualize these pairs, and notice that high importance points are not necessarily helpful in distinguishing instances, since the two curves are very similar in shape.
 
@@ -665,7 +659,7 @@ for (i in 1:n_tests) {
   ))
 }
 
-result_df$significance <- ifelse(result_df$p_value < 0.05, "*", "")
+result_df$significance <- ifelse(result_df$p_value < 0.05 / 600, "*", "")
 ```
 
 ```{r fs4}
@@ -681,12 +675,12 @@ ggplot(result_df, aes(x = position)) +
                      labels = c("Interest", "Random")) +
   theme_bw() +
   theme(legend.position = "bottom", legend.title = element_blank()) +
-  labs(x = "Locus Index", y = "Mean Locus Abs Sum", subtitle = "Sample Size = 50, Selected 43 out of 600")
+  labs(x = "Locus Index", y = "Mean Locus Abs Sum", subtitle = "Sample Size = 50, Selected 33 out of 600, Bonferroni Correction")
 ```
 
 We further explore the consitution of those important features. We only extracted the indices, and we compare them with one of the instances and extract the AA position of those points.
 
-At the moment, no noticeable difference in GC content or pattern in AA is detected.
+At the moment, **more A and G seem to be present.**
 
 We noticed some consecutive pairs -- loci that are next to each other and are all significant in test. They are extracted for possible study.
 
@@ -772,11 +766,11 @@ second_six
 
 ## Adversarial
 
-We also tried adversarial instances. We replace the selected spots of the instance all with C, and the confidence for 16S rRNA drops from **0.906 to 0.176**! Also replacing them with T reduces the confidence to 0.20. Replacing with A and G is not effective.
+We also tried adversarial instances. We replace the selected spots of the instance all with C, and the confidence for 16S rRNA drops dramatically! Also replacing them with T reduces the confidence to 0.20. Replacing with A and G is not effective.
 
 We compare them with an exact same number of randomly selected positions and substitute them accordingly too.
 
-We also tried replacing them with 0.25, and the confidence drops only to 0.7. There is also only 0.04 difference of confidence between the selected features and randomly sampled features. 
+We also tried replacing them with 0.25, and the confidence drops only a little bit. There is also only little difference of confidence between the selected features and randomly sampled features. 
 
 ```{r adversarial, cache=TRUE}
 adversarial <- onehot_instance
@@ -935,8 +929,6 @@ We plot the learning curve and the sequence logo (customed using final IG as y-a
 
 Interpretation: the achieved representation is the least required to be predicted as 16S rRNA gene with a confidence of 90%.
 
-We also plotted the mean of each position with the previously selected important spots marked blue. The value here does not seem to correspond to the identified importance of the position.
-
 ```{r reconplot, cache=TRUE}
 # line plot for conf
 ggplot(data = data.frame(iteration = 1:length(conf), conf = conf), aes(x = iteration, y = conf)) +
@@ -954,17 +946,6 @@ rownames(df) <- c("A", "C", "G", "T")
 df_mat <- as.matrix(df)
 ggseqlogo(df_mat, method='custom', seq_type='dna') + xlim(50,100) + ylim(-1.1,1.1) +
   labs(x="bp", y="IG")
-
-rowmeans <- rowMeans(as.array(baseline[1,,]))
-df <- data.frame(position = 1:600, value = rowmeans)
-
-ggplot(data = df, aes(x = position, y = value)) +
-  geom_point() +  # Plot points
-  geom_point(data = df[df$position %in% selected$position,], 
-             aes(x = position, y = value), 
-             color = "blue", shape = 2, size = 3) +  # Mark selected points with red crosses
-  theme_bw() +
-  labs(x = "Position", y = "Mean locus sum")
 ```
 
 Pay extra attention to the reconstructed sequence logo plot. In the negative region, C and T often have considerably negative weights, meaning they should not appear on this position if the prediction is 16S. This could explain why the adversarial scenario where more Cs are included caused dramatic drop in confidence.

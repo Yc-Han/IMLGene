@@ -103,6 +103,7 @@ df <- data.frame(abs_sum = abs_sum, sum=sum, position = 1 : 600)
 ggplot(df, aes(x = position, y = abs_sum)) + geom_point() + geom_smooth(method = "gam") + theme_bw()
 ggplot(df, aes(x = position, y = sum)) + geom_point() + theme_bw()
 ```
+The middle region seems to have rather low IG scores.
 
 ```{r igmod}
 df_mod <- df %>%
@@ -177,7 +178,7 @@ hm1 <- ggplot(df_keyed, aes(x = cod1, y = cod23, fill = value)) +
 # hm1
 ```
 
-We further studied wobleness (see Durrant & Bhatt). In this case, it is non-existent.
+We further studied wobleness (see Durrant & Bhatt). In this case, it is still present.
 
 ```{r wobleness}
 mean_codon <- sapply(1:3, function(i) {
@@ -377,9 +378,9 @@ hm3
 
 We then implemented the feature selection algorithm as by the enhanced IG paper. We do this based on locus level, and sample 50 events for both interest and random group.
 
-We performed one-sided t-test row-wise (only select positions with absolute sum of gradients larger than the random group). Since each row was tested only once, no multiple testing is present.
+We performed one-sided t-test row-wise (only select positions with absolute sum of gradients larger than the random group).
 
-In the end, 43 out of 600 loci are identified as having significantly higher absolute sum of gradients than the random group.
+In the end, a total of 248 out of 600 loci are identified as having significantly higher absolute sum of gradients than the random group, after Bonferroni correction!
 
 We visualize these pairs, and notice that high importance points are not necessarily helpful in distinguishing instances, since the two curves are very similar in shape.
 
@@ -525,7 +526,7 @@ for (i in 1:n_tests) {
   ))
 }
 
-result_df$significance <- ifelse(result_df$p_value < 0.05, "*", "")
+result_df$significance <- ifelse(result_df$p_value < 0.05 / n_tests, "*", "")
 ```
 
 ```{r fs4}
@@ -541,12 +542,10 @@ ggplot(result_df, aes(x = position)) +
                      labels = c("Interest", "Random")) +
   theme_bw() +
   theme(legend.position = "bottom", legend.title = element_blank()) +
-  labs(x = "Locus Index", y = "Mean Locus Abs Sum", subtitle = "Sample Size = 50, Selected 36 out of 600, baseline = 0.25")
+  labs(x = "Locus Index", y = "Mean Locus Abs Sum", subtitle = "Sample Size = 50, Selected 248 out of 600, baseline = 0.25, Bonferroni corrected")
 ```
 
 We further explore the consitution of those important features. We only extracted the indices, and we compare them with one of the instances and extract the AA position of those points.
-
-At the moment, no noticeable difference in GC content or pattern in AA is detected. Notably, 6 Alanine and 5 Asparagine are detected.
 
 ```{r fs5}
 # add AApos to selected: rounded position/3, to upper integer
@@ -616,8 +615,6 @@ second_six
 ```
 
 ## Adversarial
-
-It seems baseline 0.25 selects better features than a real baseline. Substituting with C reduces confidence for important features to 0.2 and to 0.31 for random features. 
 
 ```{r adversarial, cache=TRUE}
 adversarial <- onehot_instance
@@ -793,17 +790,6 @@ rownames(df) <- c("A", "C", "G", "T")
 df_mat <- as.matrix(df)
 ggseqlogo(df_mat, method='custom', seq_type='dna') + xlim(50,100) + ylim(-1.1,1.1) +
   labs(x="bp", y="IG")
-
-rowmeans <- rowMeans(as.array(baseline[1,,]))
-df <- data.frame(position = 1:600, value = rowmeans)
-
-ggplot(data = df, aes(x = position, y = value)) +
-  geom_point() +  # Plot points
-  geom_point(data = df[df$position %in% selected$position,], 
-             aes(x = position, y = value), 
-             color = "blue", shape = 2, size = 3) +  # Mark selected points with red crosses
-  theme_bw() +
-  labs(x = "Position", y = "Mean locus sum")
 ```
 
 Pay extra attention to the reconstructed sequence logo plot. In the negative region, C and T often have considerably negative weights, meaning they should not appear on this position if the prediction is 16S. This could explain why the adversarial scenario where more Cs are included caused dramatic drop in confidence.

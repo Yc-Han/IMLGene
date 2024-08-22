@@ -1,5 +1,4 @@
 # modification of integrated gradients
-
 interpolate_seq_m <- function(m_steps = 50,
                             baseline_type = "shuffle",
                             input_seq) {
@@ -21,6 +20,18 @@ interpolate_seq_m <- function(m_steps = 50,
       baseline <- array(input_seq[ , sample(dim(input_seq)[2]), ], dim = dim(input_seq))
     }
   }
+}
+
+interpolate_seq_modify <- function(m_steps = 50,
+                            baseline_onehot,
+                            input_seq) {
+  baseline <- baseline_onehot
+  m_steps <- as.integer(m_steps)
+  alphas <- tensorflow::tf$linspace(start = 0.0, stop = 1.0, num = m_steps + 1L) # Generate m_steps intervals for integral_approximation() below.
+  alphas_x <- alphas[ , tensorflow::tf$newaxis, tensorflow::tf$newaxis]
+  delta <- input_seq - baseline
+  sequences <- baseline +  alphas_x * delta
+  return(sequences)
 }
 
 compute_gradients <- function(input_tensor, target_class_idx, model, input_idx = NULL, pred_stepwise = FALSE) {
@@ -61,11 +72,8 @@ integral_approximation <- function(gradients) {
   py_run_string("import tensorflow as tf")
   py$gradients <- gradients
   # riemann_trapezoidal
-  py_run_string("
-grads_mid = (gradients[:, :-1, :] + gradients[:, 1:, :]) / tf.constant(2.0)
-grads_with_endpoints = tf.concat([grads_mid, gradients[:, -1:, :]], axis=1)
-")
-  py_run_string("integrated_gradients = tf.math.reduce_mean(grads_with_endpoints, axis=0)")
+  py_run_string("grads = (gradients[:-1] + gradients[1:]) / tf.constant(2.0)")
+  py_run_string("integrated_gradients = tf.math.reduce_mean(grads, axis=0)")
   return(py$integrated_gradients)
 }
 
@@ -83,54 +91,19 @@ ig_modified <- function (m_steps = 50, baseline_type = "zero", baseline_onehot =
     if (baseline_type == "modify" & !is.null(baseline_onehot)) {
       # we start modifying the baseline
       # we ask the personalized baseline to be one-hot encoded.
-      baseline_seq <- array(baseline_onehot, dim=dim(input_seq))
+      baseline_seq <- interpolate_seq_modify(m_steps = m_steps, baseline_onehot = baseline_onehot, 
+                                        input_seq = input_seq)
     } else {
       baseline_seq <- interpolate_seq_m(m_steps = m_steps, baseline_type = baseline_type, 
                                         input_seq = input_seq)
     }
-    if (is.list(baseline_seq)) {
-      for (i in 1:length(baseline_seq)) {
-        baseline_seq[[i]] <- tensorflow::tf$cast(baseline_seq[[i]], 
-                                                 dtype = "float32")
-      }
-    }
-    else {
-      baseline_seq <- tensorflow::tf$cast(baseline_seq, 
+    baseline_seq <- tensorflow::tf$cast(baseline_seq, 
                                           dtype = "float32")
-    }
-    if (is.list(input_seq)) {
-      path_gradients <- list()
-      avg_grads <- list()
-      ig <- list()
-      if (pred_stepwise) {
-        path_gradients <- gradients_stepwise(model = model, 
-                                             baseline_seq = baseline_seq, target_class_idx = target_class_idx)
-      }
-      else {
-        path_gradients <- compute_gradients(model = model, 
+    path_gradients <- compute_gradients(model = model, 
                                             input_tensor = baseline_seq, target_class_idx = target_class_idx, 
                                             input_idx = NULL, pred_stepwise = pred_stepwise)
-      }
-      for (i in 1:length(input_seq)) {
-        avg_grads[[i]] <- integral_approximation(gradients = path_gradients[[i]])
-        ig[[i]] <- ((input_seq[[i]] - baseline_seq[[i]][1, 
-                                                        , ]) * avg_grads[[i]])[1, , ]
-      }
-    }
-    else {
-      if (pred_stepwise) {
-        path_gradients <- gradients_stepwise(model = model, 
-                                             baseline_seq = baseline_seq, target_class_idx = target_class_idx, 
-                                             input_idx = NULL)
-      }
-      else {
-        path_gradients <- compute_gradients(model = model, 
-                                            input_tensor = baseline_seq, target_class_idx = target_class_idx, 
-                                            input_idx = NULL, pred_stepwise = pred_stepwise)
-      }
-      avg_grads <- integral_approximation(gradients = path_gradients)
-      ig <- (input_seq[1, , ] - baseline_seq[1, , ]) * avg_grads[ , ]
-    }
+    avg_grads <- integral_approximation(gradients = path_gradients)
+    ig <- ((input_seq - baseline_seq[1, , ]) * avg_grads)[1, , ]
   } else if (num_baseline_repeats != 1 & baseline_type == "shuffle") {
     ig_list <- list()
     for (i in 1:num_baseline_repeats) {
